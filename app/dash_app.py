@@ -40,7 +40,7 @@ def create_layout() -> html.Div:
                     html.I(className="fas fa-robot me-2"),
                     "AI Chat Agent with Time Travel"
                 ], className="fs-4"),
-            ]),
+            ], fluid=True),
             color="primary",
             dark=True,
             className="mb-4"
@@ -78,11 +78,13 @@ def create_layout() -> html.Div:
                         dbc.CardFooter([
                             dbc.Row([
                                 dbc.Col([
-                                    dbc.Textarea(
+                                    dbc.Input(
                                         id="user-input",
+                                        type="text",
                                         placeholder="Type your message here...",
-                                        style={"resize": "none", "height": "38px"},
-                                        n_submit=0
+                                        style={"height": "38px"},
+                                        n_submit=0,
+                                        debounce=False
                                     ),
                                 ], width=7),
                                 dbc.Col([
