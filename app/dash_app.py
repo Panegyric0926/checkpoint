@@ -144,19 +144,10 @@ def create_layout() -> html.Div:
                             html.Div(
                                 id="checkpoint-list",
                                 style={
-                                    "height": "400px",
+                                    "height": "480px",
                                     "overflowY": "auto"
                                 }
                             ),
-                        ]),
-                        dbc.CardFooter([
-                            dbc.InputGroup([
-                                dbc.Input(
-                                    id="checkpoint-name-input",
-                                    type="text",
-                                    placeholder="Checkpoint name (optional)"
-                                ),
-                            ], size="sm"),
                         ]),
                     ], className="shadow-sm"),
                 ], width=4),
