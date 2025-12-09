@@ -1,14 +1,17 @@
 # AI Chat Agent with Time Travel
 
-A demo application featuring a LangGraph-based chat agent with checkpoint (time travel) functionality.
+A demo application featuring a LangGraph-based chat agent with AI-powered checkpoint (time travel) functionality.
 
 ## Features
 
-- **LangGraph Agent System**: Uses LangGraph for managing the agent workflow
+- **LangGraph Agent System**: Uses LangGraph for managing the agent workflow with checkpoint judge
 - **AzureChatOpenAI**: Powered by Azure OpenAI's GPT models
 - **Internet Search**: Tavily search integration for real-time web search
-- **Checkpoint System**: Save and restore conversation states (time travel!)
-- **Langfuse Integration**: Prompt management and tracing
+- **AI-Powered Checkpoints**: AI judge automatically saves significant conversation moments
+- **Manual Checkpoints**: Users can also save checkpoints manually at any time
+- **Visual Distinction**: 🤖 AI checkpoints (blue) vs 👤 Manual checkpoints (green)
+- **Smart Save Button**: Automatically disabled when AI has already saved
+- **Langfuse Integration**: Prompt management and tracing for both main agent and checkpoint judge
 - **Dash Frontend**: Clean web-based chat interface
 
 ## Project Structure
@@ -16,18 +19,22 @@ A demo application featuring a LangGraph-based chat agent with checkpoint (time 
 ```
 checkpoint/
 ├── app/
-│   ├── __init__.py           # Package initialization
-│   ├── agent.py              # LangGraph agent with checkpoints
-│   ├── checkpoint_manager.py # Checkpoint save/restore logic
-│   ├── config.py             # Configuration from .env
-│   ├── dash_app.py           # Dash frontend application
-│   ├── langfuse_integration.py # Langfuse setup
-│   └── tools.py              # Search tool setup
-├── main.py                   # Application entry point
-├── pyproject.toml            # Project configuration (uv)
-├── uv.lock                   # Locked dependencies
-├── .env                      # Environment configuration
-└── .env.example              # Example configuration
+│   ├── __init__.py              # Package initialization
+│   ├── agent.py                 # LangGraph agent with checkpoints
+│   ├── checkpoint_judge_agent.py # AI checkpoint evaluation agent
+│   ├── checkpoint_manager.py    # Checkpoint save/restore logic
+│   ├── config.py                # Configuration from .env
+│   ├── dash_app.py              # Dash frontend application
+│   ├── langfuse_integration.py  # Langfuse setup
+│   └── tools.py                 # Search tool setup
+├── docs/
+│   └── TIME_TRAVEL.md           # Time travel feature documentation
+├── main.py                      # Application entry point
+├── pyproject.toml               # Project configuration (uv)
+├── uv.lock                      # Locked dependencies
+├── .env                         # Environment configuration
+├── .env.example                 # Example configuration
+└── .gitignore                   # Git ignore rules
 ```
 
 ## Setup
@@ -57,9 +64,64 @@ Required environment variables:
 - `LANGFUSE_HOST`: Langfuse host URL
 - `LANGFUSE_PROMPT_LABEL`: Label for fetching prompts from Langfuse
 
-### 3. Create Prompt in Langfuse
+### 3. Create Prompts in Langfuse
 
-Create a prompt named `test_checkpoint` in your Langfuse instance with your desired system prompt. Add the label matching your `LANGFUSE_PROMPT_LABEL` configuration (default: `production`).
+Create two prompts in your Langfuse instance:
+
+**1. Main Agent Prompt** (`test_checkpoint`):
+- Create a prompt named `test_checkpoint`
+- Add your desired system prompt for the main chat agent
+- Add the label matching your `LANGFUSE_PROMPT_LABEL` configuration (default: `production`)
+
+Example main agent prompt:
+```
+You are an advanced AI assistant powered by GPT with enhanced reasoning capabilities and access to real-time internet search.
+
+## Core Capabilities
+1. Deep Reasoning: Think through complex problems step-by-step
+2. Internet Search: Access real-time information via search tool
+3. Conversational Memory: Maintain context throughout the conversation
+
+## Guidelines
+- Use search for current events, news, or data verification
+- Provide thorough, well-reasoned responses
+- Cite sources when presenting factual information
+- Acknowledge uncertainty when appropriate
+```
+
+**2. Checkpoint Judge Prompt** (`checkpoint_judge`):
+- Create a prompt named `checkpoint_judge`
+- Add the checkpoint evaluation prompt
+- Use the same label as above
+
+Example checkpoint judge prompt:
+```
+You are a checkpoint management assistant. Your role is to decide whether the current point in a conversation is significant enough to save as a checkpoint for time-travel functionality.
+
+**When to recommend saving a checkpoint:**
+- After completing a significant task or solving a problem
+- At natural conversation boundaries (topic shifts, completed explanations)
+- After important decisions or conclusions are reached
+- When substantial new information has been shared
+- After code implementations, debugging sessions, or technical solutions
+- When the user receives a comprehensive answer to their question
+
+**When NOT to recommend saving:**
+- During ongoing, incomplete discussions
+- After simple greetings or acknowledgments
+- During clarification questions without resolution
+- In the middle of multi-step processes
+- After trivial exchanges or small talk
+- If very few messages have been exchanged since the last checkpoint
+
+**Guidelines:**
+- Consider the conversation's depth and value added since last checkpoint
+- Prioritize quality over quantity - save meaningful milestones
+- Think about whether a user would want to return to this exact point
+- Suggested checkpoint names should be descriptive (e.g., "Solved login bug", "Completed design review", "Explained Python decorators")
+
+Analyze the recent conversation context and make a decision.
+```
 
 ### 4. Run the Application
 
@@ -76,11 +138,26 @@ The application will start at `http://127.0.0.1:8050`
 1. Type your message in the input box
 2. Press Enter or click the send button
 3. The AI will respond (using web search when needed)
+4. **AI Auto-Save**: After significant responses, the AI judge may automatically create a checkpoint
 
 ### Checkpoint System (Time Travel)
 
-1. **Save Checkpoint**: Click "Save" to save the current conversation state
+The system features both **AI-powered automatic checkpoints** and **manual user-created checkpoints**:
+
+#### AI-Powered Automatic Checkpoints
+- The AI judge evaluates each conversation turn
+- Automatically saves checkpoints at significant moments
+- Identified by 🤖 icon and blue border
+- Shows AI-suggested name and reasoning
+
+#### Manual Checkpoints
+1. **Save Checkpoint**: Click "Save" to manually save the current conversation state
+   - Button is green when you can save
+   - Button is grey/disabled if AI already saved or no changes exist
+   - Hover over button to see tooltip explaining its state
 2. **View Checkpoints**: See all saved checkpoints in the right panel
+   - 🤖 Blue border = AI-created checkpoint
+   - 👤 Green border = Human-created checkpoint
 3. **Restore Checkpoint**: Click the restore button (↩️) on any checkpoint
    - **Warning**: This will discard all messages after that checkpoint!
 4. **Delete Checkpoint**: Click the trash button to remove a checkpoint
@@ -92,6 +169,13 @@ When you restore to a previous checkpoint:
 - All messages sent after that checkpoint are permanently removed
 - All checkpoints created after that point are also removed
 - It's like going back in time - the future never happened!
+
+### Save Button States
+
+The save button provides visual feedback:
+- **🟢 Green (Enabled)**: You can save a manual checkpoint
+- **⚪ Grey (Disabled)**: Either AI already saved or no changes to save
+- **Tooltip**: Hover over the button to see why it's enabled/disabled
 
 ## API Keys
 
@@ -107,28 +191,19 @@ When you restore to a previous checkpoint:
 ### Langfuse (Required)
 1. Sign up at https://langfuse.com (or use self-hosted instance)
 2. Create a project and get your public/secret keys
-3. Create a prompt named `test_checkpoint` with your system prompt
-4. Add the appropriate label (e.g., `production`) to the prompt
+3. Create **two prompts**:
+   - `test_checkpoint` - System prompt for the main chat agent
+   - `checkpoint_judge` - System prompt for the AI checkpoint judge
+4. Add the appropriate label (e.g., `production`) to both prompts
 
-## System Prompt
+## System Prompts
 
-The agent fetches its system prompt from Langfuse. Create a prompt named `test_checkpoint` in your Langfuse instance.
+The system uses two AI agents, each fetching its prompt from Langfuse:
 
-Example prompt content:
-```
-You are an advanced AI assistant powered by GPT-5 with enhanced reasoning capabilities and access to real-time internet search.
+1. **Main Chat Agent** (`test_checkpoint`)
+2. **Checkpoint Judge Agent** (`checkpoint_judge`)
 
-## Core Capabilities
-1. Deep Reasoning: Think through complex problems step-by-step
-2. Internet Search: Access real-time information via search tool
-3. Conversational Memory: Maintain context throughout the conversation
-
-## Guidelines
-- Use search for current events, news, or data verification
-- Provide thorough, well-reasoned responses
-- Cite sources when presenting factual information
-- Acknowledge uncertainty when appropriate
-```
+See the setup section above for example prompt content for both agents.
 
 ## Architecture
 
@@ -137,26 +212,41 @@ You are an advanced AI assistant powered by GPT-5 with enhanced reasoning capabi
 │                      Dash Frontend                          │
 │  ┌─────────────────┐  ┌─────────────────────────────────┐  │
 │  │   Chat Box      │  │   Checkpoint Panel              │  │
-│  │   - Messages    │  │   - Save/Restore/Delete         │  │
-│  │   - Input       │  │   - Time Travel                 │  │
+│  │   - Messages    │  │   - 🤖 AI Checkpoints (Blue)   │  │
+│  │   - Input       │  │   - 👤 Manual Checkpoints (Green)│  │
+│  │   - Smart Save  │  │   - Restore/Delete              │  │
 │  └─────────────────┘  └─────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    LangGraph Agent                          │
-│  ┌─────────┐    ┌─────────┐    ┌─────────────────────────┐  │
-│  │  Agent  │◄──►│  Tools  │◄──►│  AzureChatOpenAI (LLM)  │  │
-│  │  Node   │    │  Node   │    └─────────────────────────┘  │
-│  └─────────┘    └─────────┘                                 │
+│                    LangGraph Workflow                       │
+│  ┌──────────┐   ┌──────────┐   ┌────────────────────────┐ │
+│  │  Agent   │──►│  Tools   │   │  Checkpoint Judge      │ │
+│  │  Node    │   │  Node    │──►│  Node (AI Evaluation)  │ │
+│  └──────────┘   └──────────┘   └────────────────────────┘ │
+│                                          │                   │
+│                                          ▼                   │
+│                              ┌──────────────────────┐       │
+│                              │  Auto-create         │       │
+│                              │  Checkpoint (if rec) │       │
+│                              └──────────────────────┘       │
 └─────────────────────────────────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
               ▼               ▼               ▼
       ┌──────────────┐ ┌─────────────┐ ┌──────────────┐
       │  Checkpoint  │ │   Tavily    │ │   Langfuse   │
-      │   Manager    │ │   Search    │ │   Tracing    │
+      │   Manager    │ │   Search    │ │   (Prompts   │
+      │              │ │             │ │   + Tracing) │
       └──────────────┘ └─────────────┘ └──────────────┘
+                              │
+                              ▼
+                      ┌──────────────┐
+                      │  Azure       │
+                      │  OpenAI      │
+                      │  (GPT-4/5)   │
+                      └──────────────┘
 ```
 
 ## Documentation

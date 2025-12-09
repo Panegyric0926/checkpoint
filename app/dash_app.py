@@ -104,6 +104,11 @@ def create_layout() -> html.Div:
                                     ),
                                 ], width=1),
                                 dbc.Col([
+                                    dbc.Tooltip(
+                                        "AI already saved this state",
+                                        target="save-checkpoint-btn",
+                                        id="save-btn-tooltip",
+                                    ),
                                     dbc.Button(
                                         [html.I(className="fas fa-save me-1"), "Save"],
                                         id="save-checkpoint-btn",
@@ -195,6 +200,7 @@ def create_layout() -> html.Div:
             dcc.Store(id="checkpoint-trigger", data=0),
             dcc.Store(id="pending-message", data=""),  # Store for pending message
             dcc.Store(id="has-unsaved-changes", data=False),  # Track if there are unsaved changes
+            dcc.Store(id="ai-checkpoint-exists", data=False),  # Track if AI created checkpoint for current state
             
         ], fluid=True),
         
@@ -245,7 +251,6 @@ def create_layout() -> html.Div:
     margin: 5px 0;
     border-radius: 8px;
     background-color: #f8f9fa;
-    border-left: 3px solid #28a745;
     cursor: pointer;
     transition: all 0.2s;
 }
@@ -338,13 +343,21 @@ def register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("save-checkpoint-btn", "disabled"),
         Output("save-checkpoint-btn", "color"),
+        Output("save-btn-tooltip", "children"),
         Input("has-unsaved-changes", "data"),
+        Input("ai-checkpoint-exists", "data"),
     )
-    def toggle_save_button(has_unsaved_changes):
-        """Enable/disable save button based on whether there are unsaved changes"""
-        if has_unsaved_changes:
-            return False, "success"  # Enabled, green
-        return True, "secondary"  # Disabled, grey
+    def toggle_save_button(has_unsaved_changes, ai_checkpoint_exists):
+        """Enable/disable save button based on whether there are unsaved changes and AI checkpoint status"""
+        if ai_checkpoint_exists:
+            # AI already saved - disable and show grey with tooltip
+            return True, "secondary", "AI already saved this state"
+        elif has_unsaved_changes:
+            # Changes exist and no AI checkpoint - enable green button
+            return False, "success", "Save checkpoint"
+        else:
+            # No unsaved changes - disable grey button
+            return True, "secondary", "No unsaved changes"
     
     @app.callback(
         Output("checkpoint-list", "children"),
@@ -363,10 +376,24 @@ def register_callbacks(app: dash.Dash) -> None:
         items = []
         for cp in reversed(checkpoints):  # Show newest first
             timestamp = datetime.fromisoformat(cp["timestamp"]).strftime("%H:%M:%S")
+            
+            # Determine styling based on creator
+            created_by = cp.get("created_by", "human")
+            if created_by == "ai":
+                border_color = "#17a2b8"  # Info blue for AI
+                icon_class = "fas fa-robot"
+                creator_badge = dbc.Badge("AI", color="info", className="ms-2")
+            else:
+                border_color = "#28a745"  # Green for human
+                icon_class = "fas fa-user"
+                creator_badge = dbc.Badge("Manual", color="success", className="ms-2")
+            
             items.append(
                 html.Div([
                     html.Div([
+                        html.I(className=f"{icon_class} me-1", style={"fontSize": "0.9rem"}),
                         html.Strong(cp["name"]),
+                        creator_badge,
                         html.Span(f" ({cp['message_count']} msgs)", className="text-muted small"),
                     ]),
                     html.Small([
@@ -393,7 +420,10 @@ def register_callbacks(app: dash.Dash) -> None:
                     ], className="mt-2"),
                     html.Small(cp.get("description", ""), className="text-muted d-block mt-1")
                     if cp.get("description") else None,
-                ], className="checkpoint-item", id={"type": "checkpoint-item", "index": cp["id"]})
+                ], 
+                className="checkpoint-item", 
+                style={"borderLeft": f"3px solid {border_color}"},
+                id={"type": "checkpoint-item", "index": cp["id"]})
             )
         
         return items
@@ -417,20 +447,31 @@ def register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("chat-trigger", "data", allow_duplicate=True),
         Output("has-unsaved-changes", "data", allow_duplicate=True),
+        Output("checkpoint-trigger", "data", allow_duplicate=True),
+        Output("ai-checkpoint-exists", "data", allow_duplicate=True),
         Input("pending-message", "data"),
         State("chat-trigger", "data"),
+        State("checkpoint-trigger", "data"),
         prevent_initial_call=True
     )
-    def process_message(pending_message, trigger):
+    def process_message(pending_message, chat_trigger, cp_trigger):
         """Process the pending message through the agent"""
         if not pending_message:
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
-        # Process the message through the agent (this may take time)
+        # Process the message through the agent (this may take time and may create AI checkpoint)
         agent.chat(pending_message)
         
-        # Mark that there are unsaved changes after a new message
-        return (trigger or 0) + 1, True
+        # Check if AI created a checkpoint for this state
+        ai_checkpoint_exists = agent.has_auto_checkpoint_for_current_state()
+        
+        # If AI saved, no unsaved changes; otherwise mark as unsaved
+        has_unsaved = not ai_checkpoint_exists
+        
+        # Increment checkpoint trigger if AI created a checkpoint
+        new_cp_trigger = (cp_trigger or 0) + 1 if ai_checkpoint_exists else cp_trigger
+        
+        return (chat_trigger or 0) + 1, has_unsaved, new_cp_trigger, ai_checkpoint_exists
     
     @app.callback(
         Output("save-checkpoint-modal", "is_open"),
@@ -449,6 +490,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("modal-checkpoint-name", "value"),
         Output("modal-checkpoint-desc", "value"),
         Output("has-unsaved-changes", "data", allow_duplicate=True),
+        Output("ai-checkpoint-exists", "data", allow_duplicate=True),
         Input("modal-save-btn", "n_clicks"),
         State("modal-checkpoint-name", "value"),
         State("modal-checkpoint-desc", "value"),
@@ -456,14 +498,14 @@ def register_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True
     )
     def save_checkpoint(n_clicks, name, description, trigger):
-        """Save a new checkpoint"""
+        """Save a new checkpoint (human-initiated)"""
         if not n_clicks:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         agent.save_checkpoint(name=name, description=description or "")
         
-        # Mark that changes have been saved (no unsaved changes)
-        return (trigger or 0) + 1, "", "", False
+        # Mark that changes have been saved (no unsaved changes, no AI checkpoint for this exact state anymore)
+        return (trigger or 0) + 1, "", "", False, False
     
     @app.callback(
         Output("restore-checkpoint-modal", "is_open"),
@@ -541,6 +583,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("chat-trigger", "data", allow_duplicate=True),
         Output("checkpoint-trigger", "data", allow_duplicate=True),
         Output("has-unsaved-changes", "data", allow_duplicate=True),
+        Output("ai-checkpoint-exists", "data", allow_duplicate=True),
         Input("clear-chat-btn", "n_clicks"),
         State("chat-trigger", "data"),
         State("checkpoint-trigger", "data"),
@@ -549,10 +592,10 @@ def register_callbacks(app: dash.Dash) -> None:
     def clear_chat(n_clicks, chat_trigger, cp_trigger):
         """Clear the chat and all checkpoints"""
         if not n_clicks:
-            return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         agent.clear_conversation()
         agent.checkpoint_manager.clear_all()
         
-        # Reset unsaved changes state (nothing to save after clearing)
-        return (chat_trigger or 0) + 1, (cp_trigger or 0) + 1, False
+        # Reset all state flags (nothing to save after clearing)
+        return (chat_trigger or 0) + 1, (cp_trigger or 0) + 1, False, False

@@ -19,6 +19,7 @@ class Checkpoint:
     state: dict
     message_count: int
     description: str = ""
+    created_by: str = "human"  # 'human' or 'ai'
     
     def to_dict(self) -> dict:
         return asdict(self)
@@ -47,7 +48,8 @@ class CheckpointManager:
         self, 
         state: dict, 
         name: Optional[str] = None,
-        description: str = ""
+        description: str = "",
+        created_by: str = "human"
     ) -> Checkpoint:
         """
         Save the current conversation state as a checkpoint.
@@ -56,6 +58,7 @@ class CheckpointManager:
             state: The current LangGraph state to save
             name: Optional name for the checkpoint
             description: Optional description of what happened at this point
+            created_by: Who created the checkpoint - 'human' or 'ai'
             
         Returns:
             The created Checkpoint object
@@ -80,7 +83,8 @@ class CheckpointManager:
             timestamp=timestamp,
             state=saved_state,
             message_count=message_count,
-            description=description
+            description=description,
+            created_by=created_by
         )
         
         self.checkpoints[checkpoint_id] = checkpoint
@@ -104,7 +108,8 @@ class CheckpointManager:
                     "name": cp.name,
                     "timestamp": cp.timestamp,
                     "message_count": cp.message_count,
-                    "description": cp.description
+                    "description": cp.description,
+                    "created_by": cp.created_by
                 })
         return result
     

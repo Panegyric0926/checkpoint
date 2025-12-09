@@ -14,6 +14,7 @@ from langfuse import Langfuse
 from app.config import config
 from app.tools import get_tools
 from app.checkpoint_manager import CheckpointManager
+from app.checkpoint_judge_agent import CheckpointJudgeAgent
 
 # Fallback prompt if Langfuse is unavailable
 DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to internet search capabilities. Answer questions accurately and use the search tool when you need current information."""
@@ -22,6 +23,9 @@ DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to interne
 class AgentState(TypedDict):
     """State schema for the agent"""
     messages: Annotated[Sequence[BaseMessage], add_messages]
+    should_auto_checkpoint: bool  # Flag to indicate if AI judge recommended checkpoint
+    auto_checkpoint_name: str  # Suggested checkpoint name from AI judge
+    auto_checkpoint_reason: str  # Reason for checkpoint from AI judge
 
 
 class ChatAgent:
@@ -41,10 +45,16 @@ class ChatAgent:
         self.llm = self._create_llm()
         self.tools = get_tools()
         self.llm_with_tools = self.llm.bind_tools(self.tools)
-        self.graph = self._build_graph()
         self.checkpoint_manager = CheckpointManager()
-        self.current_state: AgentState = {"messages": []}
+        self.checkpoint_judge = CheckpointJudgeAgent()
+        self.current_state: AgentState = {
+            "messages": [],
+            "should_auto_checkpoint": False,
+            "auto_checkpoint_name": "",
+            "auto_checkpoint_reason": ""
+        }
         self.langfuse_handler = self._create_langfuse_handler()
+        self.graph = self._build_graph()
     
     def _create_langfuse_client(self) -> Langfuse:
         """Create Langfuse client for prompt management"""
@@ -71,7 +81,6 @@ class ChatAgent:
             azure_deployment=config.AZURE_OPENAI_DEPLOYMENT_NAME,
             api_version=config.AZURE_OPENAI_API_VERSION,
             api_key=config.AZURE_OPENAI_API_KEY,
-            temperature=1,  # Required for reasoning models
             reasoning_effort=config.AZURE_OPENAI_REASONING_EFFORT,
         )
     
@@ -94,8 +103,41 @@ class ChatAgent:
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
         
-        # Otherwise, end the conversation turn
-        return END
+        # After agent completes, go to checkpoint judge
+        return "checkpoint_judge"
+    
+    def _judge_checkpoint(self, state: AgentState) -> dict:
+        """
+        Judge whether to create an automatic checkpoint.
+        This is called after the agent responds to the user.
+        """
+        messages = state["messages"]
+        
+        # Get recent conversation history
+        recent_messages = []
+        for msg in messages[-8:]:  # Last 4 exchanges (8 messages)
+            if isinstance(msg, HumanMessage):
+                recent_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, AIMessage):
+                recent_messages.append({"role": "assistant", "content": msg.content})
+        
+        # Get last checkpoint message count
+        latest_checkpoint = self.checkpoint_manager.get_latest_checkpoint()
+        last_checkpoint_count = latest_checkpoint.message_count if latest_checkpoint else 0
+        
+        # Ask the judge agent
+        decision = self.checkpoint_judge.should_create_checkpoint(
+            recent_messages=recent_messages,
+            message_count=len(messages),
+            last_checkpoint_message_count=last_checkpoint_count
+        )
+        
+        # Update state with judge's decision
+        return {
+            "should_auto_checkpoint": decision.should_save,
+            "auto_checkpoint_name": decision.suggested_name if decision.should_save else "",
+            "auto_checkpoint_reason": decision.reason
+        }
     
     def _call_model(self, state: AgentState) -> dict:
         """Call the LLM with the current state"""
@@ -120,22 +162,26 @@ class ChatAgent:
         # Add nodes
         workflow.add_node("agent", self._call_model)
         workflow.add_node("tools", ToolNode(self.tools))
+        workflow.add_node("checkpoint_judge", self._judge_checkpoint)
         
         # Set entry point
         workflow.set_entry_point("agent")
         
-        # Add conditional edges
+        # Add conditional edges from agent
         workflow.add_conditional_edges(
             "agent",
             self._should_continue,
             {
                 "tools": "tools",
-                END: END,
+                "checkpoint_judge": "checkpoint_judge",
             }
         )
         
         # Tools always return to agent
         workflow.add_edge("tools", "agent")
+        
+        # Checkpoint judge ends the workflow
+        workflow.add_edge("checkpoint_judge", END)
         
         # Compile the graph
         return workflow.compile()
@@ -155,7 +201,7 @@ class ChatAgent:
             HumanMessage(content=user_message)
         ]
         
-        # Run the graph
+        # Run the graph (includes agent, tools, and checkpoint judge)
         result = self.graph.invoke(
             self.current_state,
             config={"callbacks": [self.langfuse_handler]}
@@ -164,6 +210,10 @@ class ChatAgent:
         # Update current state
         self.current_state = result
         
+        # If AI judge recommends checkpoint, create it automatically
+        if result.get("should_auto_checkpoint", False):
+            self._create_auto_checkpoint()
+        
         # Extract the last AI message
         for msg in reversed(result["messages"]):
             if isinstance(msg, AIMessage):
@@ -171,9 +221,46 @@ class ChatAgent:
         
         return "I apologize, but I couldn't generate a response."
     
+    def _create_auto_checkpoint(self):
+        """Create an automatic checkpoint based on AI judge's recommendation"""
+        name = self.current_state.get("auto_checkpoint_name", "Auto-saved")
+        reason = self.current_state.get("auto_checkpoint_reason", "AI recommended checkpoint")
+        
+        # Convert messages to serializable format
+        serializable_state = {
+            "messages": [
+                {
+                    "type": type(msg).__name__,
+                    "content": msg.content,
+                    "additional_kwargs": getattr(msg, "additional_kwargs", {}),
+                    "tool_calls": getattr(msg, "tool_calls", []) if hasattr(msg, "tool_calls") else []
+                }
+                for msg in self.current_state["messages"]
+            ]
+        }
+        
+        self.checkpoint_manager.save_checkpoint(
+            serializable_state,
+            name=name,
+            description=reason,
+            created_by="ai"
+        )
+    
+    def has_auto_checkpoint_for_current_state(self) -> bool:
+        """Check if an AI checkpoint exists for the current message count"""
+        current_msg_count = len(self.current_state["messages"])
+        checkpoints = self.checkpoint_manager.list_checkpoints()
+        
+        # Check if the latest checkpoint is AI-created and matches current state
+        if checkpoints:
+            latest = checkpoints[-1]
+            if latest["created_by"] == "ai" and latest["message_count"] == current_msg_count:
+                return True
+        return False
+    
     def save_checkpoint(self, name: str = None, description: str = "") -> dict:
         """
-        Save the current conversation state as a checkpoint.
+        Save the current conversation state as a checkpoint (human-initiated).
         
         Args:
             name: Optional name for the checkpoint
@@ -198,7 +285,8 @@ class ChatAgent:
         checkpoint = self.checkpoint_manager.save_checkpoint(
             serializable_state, 
             name=name,
-            description=description
+            description=description,
+            created_by="human"
         )
         
         return {
@@ -206,7 +294,8 @@ class ChatAgent:
             "name": checkpoint.name,
             "timestamp": checkpoint.timestamp,
             "message_count": checkpoint.message_count,
-            "description": checkpoint.description
+            "description": checkpoint.description,
+            "created_by": checkpoint.created_by
         }
     
     def list_checkpoints(self) -> list[dict]:
@@ -266,7 +355,12 @@ class ChatAgent:
     
     def clear_conversation(self) -> None:
         """Clear the current conversation"""
-        self.current_state = {"messages": []}
+        self.current_state = {
+            "messages": [],
+            "should_auto_checkpoint": False,
+            "auto_checkpoint_name": "",
+            "auto_checkpoint_reason": ""
+        }
     
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a specific checkpoint"""
