@@ -484,21 +484,33 @@ stateDiagram-v2
     Processing --> Disabled_AISaved: AI creates checkpoint
     Processing --> Enabled_CanSave: AI doesn't save
     
-    Disabled_AISaved --> Disabled_AISaved: Hover shows tooltip:<br/>"AI already saved this state"
+    Disabled_AISaved --> Disabled_AISaved: Hover (AI already saved)
     
     Enabled_CanSave --> Disabled_NoChanges: User clicks Save
-    Enabled_CanSave --> Enabled_CanSave: Hover shows tooltip:<br/>"Save checkpoint"
+    Enabled_CanSave --> Enabled_CanSave: Hover (Save checkpoint)
     
-    Disabled_NoChanges: ⚪ Grey Button
-    Disabled_NoChanges: Tooltip: "No unsaved changes"
+    state Disabled_NoChanges {
+        [*] --> Grey_Button
+        Grey_Button: ⚪ Grey Button
+        Grey_Button: Tooltip - No unsaved changes
+    }
     
-    Disabled_AISaved: ⚪ Grey Button (Disabled)
-    Disabled_AISaved: Tooltip: "AI already saved this state"
+    state Disabled_AISaved {
+        [*] --> Grey_Disabled
+        Grey_Disabled: ⚪ Grey Button (Disabled)
+        Grey_Disabled: Tooltip - AI already saved
+    }
     
-    Enabled_CanSave: 🟢 Green Button (Enabled)
-    Enabled_CanSave: Tooltip: "Save checkpoint"
+    state Enabled_CanSave {
+        [*] --> Green_Button
+        Green_Button: 🟢 Green Button (Enabled)
+        Green_Button: Tooltip - Save checkpoint
+    }
     
-    Processing: 🔵 Processing...
+    state Processing {
+        [*] --> Proc
+        Proc: 🔵 Processing...
+    }
 ```
 
 ### Data Flow: Message Processing
