@@ -7,11 +7,11 @@ from dash import html, dcc, callback, Input, Output, State, ctx, ALL
 import dash_bootstrap_components as dbc
 from datetime import datetime
 
-from app.agent import ChatAgent
+from app.session_manager import SessionManager
 
 
-# Initialize the agent
-agent = ChatAgent()
+# Initialize the session manager (manages multiple agent instances)
+session_manager = SessionManager(session_timeout_minutes=60)
 
 
 def create_app() -> dash.Dash:
@@ -40,6 +40,11 @@ def create_layout() -> html.Div:
                     html.I(className="fas fa-robot me-2"),
                     "AI Chat Agent with Time Travel"
                 ], className="fs-4"),
+                html.Div([
+                    html.I(className="fas fa-fingerprint me-2"),
+                    "Session: ",
+                    html.Span(id="session-id-display", className="fw-bold")
+                ], className="ms-auto text-white"),
             ], fluid=True),
             color="primary",
             dark=True,
@@ -195,12 +200,16 @@ def create_layout() -> html.Div:
             ], id="restore-checkpoint-modal", is_open=False),
             
             # Hidden stores for state management
+            dcc.Store(id="session-id", storage_type="session"),  # Store session ID (persists within tab)
             dcc.Store(id="pending-restore-checkpoint-id"),
             dcc.Store(id="chat-trigger", data=0),
             dcc.Store(id="checkpoint-trigger", data=0),
             dcc.Store(id="pending-message", data=""),  # Store for pending message
             dcc.Store(id="has-unsaved-changes", data=False),  # Track if there are unsaved changes
             dcc.Store(id="ai-checkpoint-exists", data=False),  # Track if AI created checkpoint for current state
+            
+            # Dummy location component to trigger initial callbacks
+            dcc.Location(id="url", refresh=False)
             
         ], fluid=True),
         
@@ -267,11 +276,48 @@ def register_callbacks(app: dash.Dash) -> None:
     """Register all Dash callbacks"""
     
     @app.callback(
+        Output("session-id", "data"),
+        Output("session-id-display", "children"),
+        Input("url", "pathname"),
+        State("session-id", "data"),
+    )
+    def initialize_session(pathname, session_id):
+        """Initialize or retrieve session ID for this browser tab"""
+        if not session_id:
+            # Create new session for this tab
+            new_session_id = session_manager.create_session()
+            return new_session_id, new_session_id
+        else:
+            # Verify existing session is still valid
+            agent = session_manager.get_agent(session_id)
+            if not agent:
+                # Session expired, create new one
+                new_session_id = session_manager.create_session()
+                return new_session_id, new_session_id
+            
+            # Session is valid
+            return session_id, session_id
+    
+    @app.callback(
         Output("chat-messages", "children"),
         Input("chat-trigger", "data"),
+        Input("session-id", "data"),
     )
-    def update_chat_display(_):
+    def update_chat_display(_, session_id):
         """Update the chat display with current conversation"""
+        if not session_id:
+            return html.Div([
+                html.I(className="fas fa-spinner fa-spin fa-3x text-primary"),
+                html.P("Initializing session...", className="text-muted mt-2")
+            ], className="text-center py-5")
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
+            return html.Div([
+                html.I(className="fas fa-exclamation-triangle fa-3x text-danger"),
+                html.P("Session expired. Please refresh the page.", className="text-muted mt-2")
+            ], className="text-center py-5")
+        
         history = agent.get_conversation_history()
         
         if not history:
@@ -362,9 +408,22 @@ def register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("checkpoint-list", "children"),
         Input("checkpoint-trigger", "data"),
+        Input("session-id", "data"),
     )
-    def update_checkpoint_list(_):
+    def update_checkpoint_list(_, session_id):
         """Update the checkpoint list display"""
+        if not session_id:
+            return html.Div([
+                html.I(className="fas fa-spinner fa-spin text-muted"),
+                html.P("Initializing...", className="text-muted small text-center mt-2")
+            ], className="text-center py-4")
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
+            return html.Div([
+                html.P("Session expired", className="text-danger small text-center")
+            ])
+        
         checkpoints = agent.list_checkpoints()
         
         if not checkpoints:
@@ -452,11 +511,16 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("pending-message", "data"),
         State("chat-trigger", "data"),
         State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def process_message(pending_message, chat_trigger, cp_trigger):
+    def process_message(pending_message, chat_trigger, cp_trigger, session_id):
         """Process the pending message through the agent"""
-        if not pending_message:
+        if not pending_message or not session_id:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         # Process the message through the agent (this may take time and may create AI checkpoint)
@@ -495,11 +559,16 @@ def register_callbacks(app: dash.Dash) -> None:
         State("modal-checkpoint-name", "value"),
         State("modal-checkpoint-desc", "value"),
         State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def save_checkpoint(n_clicks, name, description, trigger):
+    def save_checkpoint(n_clicks, name, description, trigger, session_id):
         """Save a new checkpoint (human-initiated)"""
-        if not n_clicks:
+        if not n_clicks or not session_id:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         agent.save_checkpoint(name=name, description=description or "")
@@ -516,9 +585,10 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("restore-confirm-btn", "n_clicks"),
         State("restore-checkpoint-modal", "is_open"),
         State("pending-restore-checkpoint-id", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def handle_restore_modal(restore_clicks, cancel_click, confirm_click, is_open, pending_id):
+    def handle_restore_modal(restore_clicks, cancel_click, confirm_click, is_open, pending_id, session_id):
         """Handle restore checkpoint modal"""
         triggered_id = ctx.triggered_id
         
@@ -529,6 +599,13 @@ def register_callbacks(app: dash.Dash) -> None:
             # Check if the button was actually clicked (not just re-rendered)
             # Find the index of the clicked button and verify it has a click count
             if restore_clicks and any(click is not None and click > 0 for click in restore_clicks):
+                if not session_id:
+                    return dash.no_update, dash.no_update, dash.no_update
+                
+                agent = session_manager.get_agent(session_id)
+                if not agent:
+                    return dash.no_update, dash.no_update, dash.no_update
+                
                 checkpoint_id = triggered_id["index"]
                 checkpoints = agent.list_checkpoints()
                 cp_info = next((cp for cp in checkpoints if cp["id"] == checkpoint_id), None)
@@ -550,11 +627,16 @@ def register_callbacks(app: dash.Dash) -> None:
         State("pending-restore-checkpoint-id", "data"),
         State("chat-trigger", "data"),
         State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def confirm_restore(n_clicks, checkpoint_id, chat_trigger, cp_trigger):
+    def confirm_restore(n_clicks, checkpoint_id, chat_trigger, cp_trigger, session_id):
         """Confirm and execute checkpoint restoration"""
-        if not n_clicks or not checkpoint_id:
+        if not n_clicks or not checkpoint_id or not session_id:
+            return dash.no_update, dash.no_update
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
             return dash.no_update, dash.no_update
         
         agent.restore_checkpoint(checkpoint_id)
@@ -565,17 +647,20 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("checkpoint-trigger", "data", allow_duplicate=True),
         Input({"type": "delete-btn", "index": ALL}, "n_clicks"),
         State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def delete_checkpoint(delete_clicks, trigger):
+    def delete_checkpoint(delete_clicks, trigger, session_id):
         """Delete a checkpoint"""
         triggered_id = ctx.triggered_id
         
         if isinstance(triggered_id, dict) and triggered_id.get("type") == "delete-btn":
-            if any(delete_clicks):
-                checkpoint_id = triggered_id["index"]
-                agent.delete_checkpoint(checkpoint_id)
-                return (trigger or 0) + 1
+            if any(delete_clicks) and session_id:
+                agent = session_manager.get_agent(session_id)
+                if agent:
+                    checkpoint_id = triggered_id["index"]
+                    agent.delete_checkpoint(checkpoint_id)
+                    return (trigger or 0) + 1
         
         return dash.no_update
     
@@ -587,11 +672,16 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("clear-chat-btn", "n_clicks"),
         State("chat-trigger", "data"),
         State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
         prevent_initial_call=True
     )
-    def clear_chat(n_clicks, chat_trigger, cp_trigger):
+    def clear_chat(n_clicks, chat_trigger, cp_trigger, session_id):
         """Clear the chat and all checkpoints"""
-        if not n_clicks:
+        if not n_clicks or not session_id:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         agent.clear_conversation()

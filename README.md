@@ -4,6 +4,8 @@ A demo application featuring a LangGraph-based chat agent with AI-powered checkp
 
 ## Features
 
+- **Multi-Session Support**: Each browser tab gets its own isolated chat session with unique session ID
+- **Session Persistence**: Sessions persist within a tab (survives page refresh) with automatic cleanup after 60 minutes of inactivity
 - **LangGraph Agent System**: Uses LangGraph for managing the agent workflow with checkpoint judge
 - **AzureChatOpenAI**: Powered by Azure OpenAI's GPT models
 - **Internet Search**: Tavily search integration for real-time web search
@@ -23,6 +25,7 @@ checkpoint/
 │   ├── agent.py                 # LangGraph agent with checkpoints
 │   ├── checkpoint_judge_agent.py # AI checkpoint evaluation agent
 │   ├── checkpoint_manager.py    # Checkpoint save/restore logic
+│   ├── session_manager.py       # Multi-session management (per-tab agents)
 │   ├── config.py                # Configuration from .env
 │   ├── dash_app.py              # Dash frontend application
 │   ├── langfuse_integration.py  # Langfuse setup
@@ -133,6 +136,19 @@ The application will start at `http://127.0.0.1:8050`
 
 ## Usage
 
+### Multi-Tab Sessions
+
+Each browser tab operates independently:
+
+1. **New Tab**: Opening a new tab creates a fresh session with a unique 8-character session ID
+2. **Session ID Display**: Your session ID is visible in the top-right corner of the navbar
+3. **Independent State**: Each tab has its own:
+   - Conversation history
+   - Checkpoint storage
+   - Agent instance
+4. **Session Persistence**: Sessions survive page refresh within the same tab (stored in browser session storage)
+5. **Auto-Cleanup**: Inactive sessions are automatically removed after 60 minutes
+
 ### Chat Interface
 
 1. Type your message in the input box
@@ -209,14 +225,29 @@ See the setup section above for example prompt content for both agents.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Dash Frontend                          │
+│                   Dash Frontend (Multi-Tab)                 │
 │  ┌─────────────────┐  ┌─────────────────────────────────┐  │
 │  │   Chat Box      │  │   Checkpoint Panel              │  │
 │  │   - Messages    │  │   - 🤖 AI Checkpoints (Blue)   │  │
 │  │   - Input       │  │   - 👤 Manual Checkpoints (Green)│  │
 │  │   - Smart Save  │  │   - Restore/Delete              │  │
+│  │   - Session ID  │  │   - Per-session storage         │  │
 │  └─────────────────┘  └─────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                  ┌───────────────────────┐
+                  │   Session Manager     │
+                  │   (Maps session IDs   │
+                  │    to agent instances)│
+                  └───────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         Agent 1          Agent 2         Agent 3
+      (Session: abc1)  (Session: def2)  (Session: ghi3)
+              │               │               │
+              └───────────────┴───────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -238,7 +269,7 @@ See the setup section above for example prompt content for both agents.
       ┌──────────────┐ ┌─────────────┐ ┌──────────────┐
       │  Checkpoint  │ │   Tavily    │ │   Langfuse   │
       │   Manager    │ │   Search    │ │   (Prompts   │
-      │              │ │             │ │   + Tracing) │
+      │ (per session)│ │             │ │   + Tracing) │
       └──────────────┘ └─────────────┘ └──────────────┘
                               │
                               ▼
@@ -253,7 +284,3 @@ See the setup section above for example prompt content for both agents.
 
 For detailed documentation on the time travel feature, see:
 - [Time Travel Technical Documentation](docs/TIME_TRAVEL.md) - Detailed charts and explanations
-
-## License
-
-MIT License

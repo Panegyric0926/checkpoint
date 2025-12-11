@@ -18,19 +18,27 @@ This document provides a comprehensive explanation of the AI-powered checkpoint-
 
 ## Overview
 
-The time travel feature combines manual and AI-powered checkpoint creation:
+The time travel feature combines manual and AI-powered checkpoint creation with multi-session support:
 
+- **Multi-Session Architecture**: Each browser tab gets its own isolated agent instance and checkpoint storage
+- **Session Persistence**: Sessions are stored per-tab and survive page refresh
 - **Manual Checkpoints**: Users can save conversation states at any point
 - **AI Auto-Checkpoints**: AI judge automatically evaluates and saves significant conversation moments
 - **Visual Distinction**: Different colors and icons distinguish AI vs human checkpoints (🤖 vs 👤)
 - **Smart Save Button**: Automatically disabled when AI has already saved the current state
 - **Time Travel**: Restore to any checkpoint, discarding all future states
+- **Session Display**: Session ID visible in navbar for easy identification
 
 ### Key Features
 
 ```mermaid
 mindmap
   root((Time Travel<br/>System))
+    Session Management
+      Per-tab isolation
+      Unique session IDs
+      Auto cleanup (60min)
+      Session persistence
     Manual Checkpoints
       User-initiated saves
       Custom names
@@ -49,6 +57,7 @@ mindmap
       Context-aware buttons
       Tooltips
       Color coding
+      Session ID display
 ```
 
 ## Core Concepts
@@ -230,21 +239,24 @@ flowchart TB
     subgraph Browser["Browser (User Interface)"]
         direction TB
         ChatUI[Chat Interface]
+        SessionDisplay[Session ID Display<br/>Top-right navbar]
         SaveUI[Save Button<br/>🟢 Green = Can Save<br/>⚪ Grey = Disabled]
         CheckpointUI["Checkpoint List<br/>🤖 AI (Blue Border)<br/>👤 Human (Green Border)"]
     end
     
     subgraph Backend["Python Backend"]
         direction TB
-        DashApp[Dash Application<br/>Callbacks & State]
+        DashApp[Dash Application<br/>Callbacks & State<br/>Session ID Store]
         
-        subgraph AgentSystem["Agent System"]
+        SessionMgr[Session Manager<br/>Maps session IDs to agents<br/>Auto-cleanup after 60min]
+        
+        subgraph AgentSystem["Agent System (Per Session)"]
             ChatAgent[Chat Agent]
             LangGraphWF[LangGraph Workflow]
             JudgeAgent[Checkpoint Judge Agent]
         end
         
-        subgraph Storage["Storage"]
+        subgraph Storage["Storage (Per Session)"]
             CPManager[Checkpoint Manager]
             ConvState[Conversation State]
         end
@@ -257,11 +269,13 @@ flowchart TB
     end
     
     ChatUI <--> DashApp
+    SessionDisplay <--> DashApp
     SaveUI <--> DashApp
     CheckpointUI <--> DashApp
     
-    DashApp <--> ChatAgent
-    DashApp <--> CPManager
+    DashApp <--> SessionMgr
+    SessionMgr <--> ChatAgent
+    SessionMgr <--> CPManager
     
     ChatAgent <--> LangGraphWF
     LangGraphWF <--> JudgeAgent
@@ -345,6 +359,56 @@ stateDiagram-v2
 
 ## Component Details
 
+### SessionManager Class
+
+```python
+class SessionManager:
+    def __init__(self, session_timeout_minutes: int = 60):
+        self.agents: Dict[str, ChatAgent] = {}  # session_id -> agent
+        self.last_access: Dict[str, datetime] = {}  # session_id -> timestamp
+        self.session_timeout = timedelta(minutes=session_timeout_minutes)
+        self.lock = Lock()  # Thread-safe operations
+    
+    def create_session(self) -> str:
+        # Creates new session with unique 8-char ID
+        
+    def get_agent(self, session_id: str) -> Optional[ChatAgent]:
+        # Retrieves agent for session, updates last_access
+        
+    def cleanup_inactive_sessions(self) -> int:
+        # Removes sessions inactive for > timeout period
+```
+
+**Key Features:**
+- **Thread-Safe**: Uses locks for concurrent access
+- **Auto-Cleanup**: Removes inactive sessions (default 60 minutes)
+- **Session Tracking**: Maintains last access time per session
+- **Unique IDs**: 8-character session IDs for display
+
+**Session Lifecycle:**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: User opens new tab
+    Created --> Active: First message sent
+    Active --> Active: User interacts
+    Active --> Idle: No activity
+    Idle --> Active: User returns
+    Idle --> Expired: > 60 min inactive
+    Expired --> [*]: Auto-cleanup
+    Active --> [*]: User closes tab
+    
+    note right of Created
+        Session ID generated
+        Stored in browser
+    end note
+    
+    note right of Expired
+        Agent instance deleted
+        Checkpoints removed
+    end note
+```
+
 ### CheckpointJudgeAgent Class
 
 ```python
@@ -397,11 +461,43 @@ class ChatAgent:
 
 ## Data Structures
 
-### Checkpoint Storage Structure
+### Session-Based Storage Structure
+
+```mermaid
+graph TB
+    subgraph SessionManager
+        Sessions["agents: Dict<br/>{<br/>  'abc123': Agent1,<br/>  'def456': Agent2,<br/>  'ghi789': Agent3<br/>}"]        
+    end
+    
+    subgraph Agent1["Agent (Session: abc123)"]
+        CM1[Checkpoint Manager 1]
+        State1[Conversation State 1]
+    end
+    
+    subgraph Agent2["Agent (Session: def456)"]
+        CM2[Checkpoint Manager 2]
+        State2[Conversation State 2]
+    end
+    
+    subgraph Agent3["Agent (Session: ghi789)"]
+        CM3[Checkpoint Manager 3]
+        State3[Conversation State 3]
+    end
+    
+    Sessions --> Agent1
+    Sessions --> Agent2
+    Sessions --> Agent3
+    
+    style Agent1 fill:#e8f5e9
+    style Agent2 fill:#e3f2fd
+    style Agent3 fill:#fff3e0
+```
+
+### Checkpoint Storage Structure (Per Session)
 
 ```mermaid
 graph LR
-    subgraph CheckpointManager
+    subgraph CheckpointManager["CheckpointManager (Per Session)"]
         Order["checkpoint_order<br/>['cp1', 'cp2', 'cp3']"]
         
         subgraph Checkpoints["checkpoints: Dict"]
@@ -513,12 +609,55 @@ stateDiagram-v2
     }
 ```
 
+### Data Flow: Session Initialization
+
+```mermaid
+sequenceDiagram
+    participant U as User (New Tab)
+    participant Browser as Browser Storage
+    participant UI as Dash UI
+    participant SM as Session Manager
+    
+    U->>Browser: Opens new tab
+    Browser->>Browser: Check for session-id<br/>in session storage
+    Browser-->>UI: session-id = null
+    
+    UI->>UI: dcc.Location triggers<br/>initialization callback
+    UI->>SM: create_session()
+    SM->>SM: Generate 8-char UUID<br/>Create new ChatAgent
+    SM-->>UI: session_id = "abc12345"
+    
+    UI->>Browser: Store session-id<br/>in session storage
+    UI->>UI: Display session ID<br/>in navbar
+    UI->>UI: Initialize chat display
+    UI->>UI: Initialize checkpoint list
+    
+    Note over U,UI: User can now chat<br/>with isolated agent instance
+    
+    alt User refreshes page
+        Browser->>Browser: Retrieve session-id<br/>from session storage
+        Browser-->>UI: session-id = "abc12345"
+        UI->>SM: get_agent("abc12345")
+        SM-->>UI: Existing agent returned
+        UI->>UI: Restore conversation state
+    end
+    
+    alt Session expired (>60 min)
+        UI->>SM: get_agent("abc12345")
+        SM->>SM: Session not found<br/>or expired
+        SM-->>UI: null
+        UI->>SM: create_session()
+        SM-->>UI: New session created
+    end
+```
+
 ### Data Flow: Message Processing
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant UI as Dash UI
+    participant SM as Session Manager
     participant A as Chat Agent
     participant G as LangGraph
     participant J as Judge Agent
@@ -526,6 +665,8 @@ sequenceDiagram
     
     U->>UI: Types message
     UI->>UI: Clear input immediately
+    UI->>SM: get_agent(session_id)
+    SM-->>UI: agent
     UI->>A: agent.chat(message)
     
     A->>G: Invoke workflow
@@ -792,24 +933,32 @@ gantt
 mindmap
   root((AI-Powered<br/>Time Travel))
     Architecture
+      Multi-session support
+      Per-tab isolation
       LangGraph orchestration
       Checkpoint judge node
       Dual-agent system
     Features
+      Session management
       Auto-save milestones
       Manual save override
       Visual distinction
       Smart UI feedback
+      Session ID display
     Benefits
+      Multi-tab capability
+      Independent conversations
       Reduced manual effort
       Intelligent decisions
       Clear provenance
       Non-intrusive
     Implementation
+      Session Manager
       Langfuse prompts
       Structured output
       State management
       Callback coordination
+      Browser session storage
 ```
 
 The AI-powered checkpoint system provides intelligent, automatic milestone tracking while preserving full user control through manual saves. The visual distinction and smart UI feedback make it clear when and why checkpoints are created, providing transparency and trust in the automated system.
