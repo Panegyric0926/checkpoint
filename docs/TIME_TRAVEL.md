@@ -786,7 +786,7 @@ stateDiagram-v2
 ### Full Conversation Timeline
 
 ```mermaid
-gitgraph
+gitGraph
     commit id: "Start conversation"
     commit id: "User: Flask question"
     commit id: "AI: Comprehensive answer"
@@ -809,14 +809,12 @@ gitgraph
     
     checkout main
     commit id: "User: Wait, mistake!"
-    commit id: "User: Restore to CP1" type: REVERSE
+    commit id: "User: Restore to CP1" type: HIGHLIGHT
     
     checkout ai_checkpoint_1
     commit id: "RESTORED HERE" type: HIGHLIGHT
     commit id: "User: Different approach"
     commit id: "AI: Alternative solution"
-    
-    note: All checkpoints remain available for future restoration
 ```
 
 ## Best Practices
