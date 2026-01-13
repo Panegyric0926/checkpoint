@@ -127,10 +127,11 @@ class CheckpointManager:
     
     def restore_checkpoint(self, checkpoint_id: str) -> Optional[dict]:
         """
-        Restore to a previous checkpoint, discarding all checkpoints after it.
+        Restore to a previous checkpoint, preserving all checkpoints.
         
         This implements the "time travel" feature - when you restore to a checkpoint,
-        all subsequent checkpoints are removed as if they never happened.
+        the conversation state returns to that point, but all checkpoints remain
+        available for future restoration.
         
         Args:
             checkpoint_id: The ID of the checkpoint to restore to
@@ -143,22 +144,8 @@ class CheckpointManager:
         
         checkpoint = self.checkpoints[checkpoint_id]
         
-        # Find the index of this checkpoint
-        try:
-            index = self.checkpoint_order.index(checkpoint_id)
-        except ValueError:
-            return None
-        
-        # Remove all checkpoints after this one
-        checkpoints_to_remove = self.checkpoint_order[index + 1:]
-        for cp_id in checkpoints_to_remove:
-            if cp_id in self.checkpoints:
-                del self.checkpoints[cp_id]
-        
-        # Truncate the order list
-        self.checkpoint_order = self.checkpoint_order[:index + 1]
-        
         # Return a deep copy of the saved state
+        # Note: We no longer delete later checkpoints - they remain available
         return copy.deepcopy(checkpoint.state)
     
     def delete_checkpoint(self, checkpoint_id: str) -> bool:

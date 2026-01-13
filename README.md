@@ -175,16 +175,18 @@ The system features both **AI-powered automatic checkpoints** and **manual user-
    - 🤖 Blue border = AI-created checkpoint
    - 👤 Green border = Human-created checkpoint
 3. **Restore Checkpoint**: Click the restore button (↩️) on any checkpoint
-   - **Warning**: This will discard all messages after that checkpoint!
+   - This will restore the conversation to that point in time
+   - All later checkpoints remain available for future restoration
 4. **Delete Checkpoint**: Click the trash button to remove a checkpoint
 
 ### How Time Travel Works
 
 When you restore to a previous checkpoint:
 - The conversation returns to that exact state
-- All messages sent after that checkpoint are permanently removed
-- All checkpoints created after that point are also removed
-- It's like going back in time - the future never happened!
+- All messages sent after that checkpoint are replaced with the saved state
+- **All checkpoints (both earlier and later) remain available**
+- You can continue from this point or restore to a different checkpoint
+- This allows you to explore different conversation branches
 
 ### Save Button States
 

@@ -26,7 +26,7 @@ The time travel feature combines manual and AI-powered checkpoint creation with 
 - **AI Auto-Checkpoints**: AI judge automatically evaluates and saves significant conversation moments
 - **Visual Distinction**: Different colors and icons distinguish AI vs human checkpoints (🤖 vs 👤)
 - **Smart Save Button**: Automatically disabled when AI has already saved the current state
-- **Time Travel**: Restore to any checkpoint, discarding all future states
+- **Time Travel**: Restore to any checkpoint while preserving all other checkpoints
 - **Session Display**: Session ID visible in navbar for easy identification
 
 ### Key Features
@@ -775,11 +775,11 @@ stateDiagram-v2
     
     CP4 --> CP3: RESTORE to CP3
     
-    note right of CP3: CP4 is deleted!<br/>Messages 9-12 removed
+    note right of CP3: CP4 still exists!<br/>Messages reset to CP3 state<br/>Can restore to CP4 later
     
     CP3 --> CP3_new: Continue from here<br/>Different path
     
-    style CP4 fill:#ffcccc,stroke:#ff0000
+    style CP4 fill:#e1f5fe,stroke:#17a2b8
     style CP3 fill:#c8e6c9,stroke:#00ff00
 ```
 
@@ -815,6 +815,8 @@ gitgraph
     commit id: "RESTORED HERE" type: HIGHLIGHT
     commit id: "User: Different approach"
     commit id: "AI: Alternative solution"
+    
+    note: All checkpoints remain available for future restoration
 ```
 
 ## Best Practices

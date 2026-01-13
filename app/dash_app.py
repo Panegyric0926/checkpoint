@@ -188,7 +188,7 @@ def create_layout() -> html.Div:
                         "Are you sure you want to restore to this checkpoint?"
                     ]),
                     html.P(
-                        "All messages after this checkpoint will be permanently removed.",
+                        "All messages after this checkpoint will be removed.",
                         className="text-danger"
                     ),
                     html.Div(id="restore-checkpoint-info"),
