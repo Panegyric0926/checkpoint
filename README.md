@@ -9,6 +9,7 @@ A demo application featuring a LangGraph-based chat agent with AI-powered checkp
 - **LangGraph Agent System**: Uses LangGraph for managing the agent workflow with checkpoint judge
 - **AzureChatOpenAI**: Powered by Azure OpenAI's GPT models
 - **Internet Search**: Tavily search integration for real-time web search
+- **Message Editing & Branching**: Edit previously sent messages to create new conversation branches
 - **AI-Powered Checkpoints**: AI judge automatically saves significant conversation moments
 - **Manual Checkpoints**: Users can also save checkpoints manually at any time
 - **Visual Distinction**: 🤖 AI checkpoints (blue) vs 👤 Manual checkpoints (green)
@@ -31,7 +32,8 @@ checkpoint/
 │   ├── langfuse_integration.py  # Langfuse setup
 │   └── tools.py                 # Search tool setup
 ├── docs/
-│   └── TIME_TRAVEL.md           # Time travel feature documentation
+│   ├── TIME_TRAVEL.md           # Time travel feature documentation
+│   └── MESSAGE_EDITING.md       # Message editing & branching documentation
 ├── main.py                      # Application entry point
 ├── pyproject.toml               # Project configuration (uv)
 ├── uv.lock                      # Locked dependencies
@@ -155,6 +157,28 @@ Each browser tab operates independently:
 2. Press Enter or click the send button
 3. The AI will respond (using web search when needed)
 4. **AI Auto-Save**: After significant responses, the AI judge may automatically create a checkpoint
+
+### Message Editing & Branching
+
+You can edit your previously sent messages to explore different conversation paths:
+
+1. **Edit Message**: Click the edit button (pencil icon) on any of your messages
+2. **Modify Content**: Edit the message text in the modal dialog
+3. **Create Branch**: Click "Save & Regenerate"
+   - All messages after the edited one are discarded
+   - AI generates a new response to your edited message
+   - Creates a new conversation branch from that point
+4. **Checkpoint Protection**: Saved checkpoints remain unchanged
+   - If you saved "My name is Mickey" as a checkpoint
+   - Then edit it to "My name is Levin"
+   - The checkpoint will still contain "Mickey"
+   - You can restore to the checkpoint anytime to return to the original branch
+
+**Use Cases:**
+- Try different phrasings of a question
+- Explore alternative conversation paths
+- Correct typos or refine your questions
+- Experiment with different approaches without losing checkpoints
 
 ### Checkpoint System (Time Travel)
 
@@ -284,5 +308,6 @@ See the setup section above for example prompt content for both agents.
 
 ## Documentation
 
-For detailed documentation on the time travel feature, see:
-- [Time Travel Technical Documentation](docs/TIME_TRAVEL.md) - Detailed charts and explanations
+For detailed documentation on features:
+- [Time Travel Technical Documentation](docs/TIME_TRAVEL.md) - Detailed charts and explanations of checkpoint system
+- [Message Editing & Branching](docs/MESSAGE_EDITING.md) - Comprehensive guide to editing messages and creating branches

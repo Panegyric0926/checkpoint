@@ -199,6 +199,36 @@ def create_layout() -> html.Div:
                 ]),
             ], id="restore-checkpoint-modal", is_open=False),
             
+            # Edit Message Modal
+            dbc.Modal([
+                dbc.ModalHeader(dbc.ModalTitle("Edit Message & Create Branch")),
+                dbc.ModalBody([
+                    html.P([
+                        html.I(className="fas fa-code-branch text-info me-2"),
+                        "Editing this message will create a new conversation branch."
+                    ]),
+                    html.P(
+                        "All messages after this one will be discarded, and a new AI response will be generated.",
+                        className="text-warning small"
+                    ),
+                    html.P(
+                        "Note: Saved checkpoints remain unchanged.",
+                        className="text-muted small"
+                    ),
+                    html.Hr(),
+                    dbc.Label("Edit your message:"),
+                    dbc.Textarea(
+                        id="edit-message-content",
+                        placeholder="Type your edited message...",
+                        style={"minHeight": "120px"}
+                    ),
+                ]),
+                dbc.ModalFooter([
+                    dbc.Button("Cancel", id="edit-cancel-btn", color="secondary"),
+                    dbc.Button("Save & Regenerate", id="edit-confirm-btn", color="primary"),
+                ]),
+            ], id="edit-message-modal", is_open=False),
+            
             # Hidden stores for state management
             dcc.Store(id="session-id", storage_type="session"),  # Store session ID (persists within tab)
             dcc.Store(id="pending-restore-checkpoint-id"),
@@ -207,6 +237,8 @@ def create_layout() -> html.Div:
             dcc.Store(id="pending-message", data=""),  # Store for pending message
             dcc.Store(id="has-unsaved-changes", data=False),  # Track if there are unsaved changes
             dcc.Store(id="ai-checkpoint-exists", data=False),  # Track if AI created checkpoint for current state
+            dcc.Store(id="pending-edit-index"),  # Store message index being edited
+            dcc.Store(id="pending-edit-content"),  # Store edited message content
             
             # Dummy location component to trigger initial callbacks
             dcc.Location(id="url", refresh=False)
@@ -327,7 +359,7 @@ def register_callbacks(app: dash.Dash) -> None:
             ], className="text-center py-5")
         
         messages = []
-        for msg in history:
+        for idx, msg in enumerate(history):
             role = msg["role"]
             content = msg["content"]
             
@@ -335,7 +367,18 @@ def register_callbacks(app: dash.Dash) -> None:
                 messages.append(html.Div([
                     html.Div([
                         html.Div([html.I(className="fas fa-user me-1"), "You"], className="fw-bold mb-1"),
-                        html.Div(content)
+                        html.Div(content),
+                        # Add edit button for user messages
+                        dbc.Button(
+                            html.I(className="fas fa-edit"),
+                            id={"type": "edit-msg-btn", "index": idx},
+                            size="sm",
+                            color="light",
+                            outline=True,
+                            className="mt-2",
+                            title="Edit and create new branch",
+                            style={"opacity": "0.7"}
+                        )
                     ], className="chat-message user-message", style={
                         "padding": "12px 16px",
                         "margin": "8px 0",
@@ -689,3 +732,98 @@ def register_callbacks(app: dash.Dash) -> None:
         
         # Reset all state flags (nothing to save after clearing)
         return (chat_trigger or 0) + 1, (cp_trigger or 0) + 1, False, False
+    
+    @app.callback(
+        Output("edit-message-modal", "is_open"),
+        Output("pending-edit-index", "data"),
+        Output("edit-message-content", "value"),
+        Input({"type": "edit-msg-btn", "index": ALL}, "n_clicks"),
+        Input("edit-cancel-btn", "n_clicks"),
+        State("edit-message-modal", "is_open"),
+        State("pending-edit-index", "data"),
+        State("session-id", "data"),
+        prevent_initial_call=True
+    )
+    def handle_edit_modal(edit_clicks, cancel_click, is_open, pending_index, session_id):
+        """Handle the edit message modal"""
+        triggered_id = ctx.triggered_id
+        
+        # Close modal on cancel
+        if triggered_id == "edit-cancel-btn":
+            return False, None, ""
+        
+        # Open modal when edit button is clicked
+        if isinstance(triggered_id, dict) and triggered_id.get("type") == "edit-msg-btn":
+            if any(click is not None and click > 0 for click in edit_clicks):
+                if not session_id:
+                    return dash.no_update, dash.no_update, dash.no_update
+                
+                agent = session_manager.get_agent(session_id)
+                if not agent:
+                    return dash.no_update, dash.no_update, dash.no_update
+                
+                message_index = triggered_id["index"]
+                history = agent.get_conversation_history()
+                
+                # Get the current content of the message
+                if 0 <= message_index < len(history) and history[message_index]["role"] == "user":
+                    current_content = history[message_index]["content"]
+                    return True, message_index, current_content
+        
+        return dash.no_update, dash.no_update, dash.no_update
+    
+    @app.callback(
+        Output("edit-message-modal", "is_open", allow_duplicate=True),
+        Output("chat-trigger", "data", allow_duplicate=True),
+        Output("pending-edit-content", "data"),
+        Input("edit-confirm-btn", "n_clicks"),
+        State("pending-edit-index", "data"),
+        State("edit-message-content", "value"),
+        State("chat-trigger", "data"),
+        State("session-id", "data"),
+        prevent_initial_call=True
+    )
+    def capture_edit(n_clicks, message_index, edited_content, chat_trigger, session_id):
+        """Capture the edited content for processing and close modal"""
+        if not n_clicks or message_index is None or not edited_content or not session_id:
+            return dash.no_update, dash.no_update, dash.no_update
+        
+        # Close modal and store edited content for processing
+        return False, chat_trigger, {"index": message_index, "content": edited_content.strip()}
+    
+    @app.callback(
+        Output("chat-trigger", "data", allow_duplicate=True),
+        Output("has-unsaved-changes", "data", allow_duplicate=True),
+        Output("checkpoint-trigger", "data", allow_duplicate=True),
+        Output("ai-checkpoint-exists", "data", allow_duplicate=True),
+        Input("pending-edit-content", "data"),
+        State("chat-trigger", "data"),
+        State("checkpoint-trigger", "data"),
+        State("session-id", "data"),
+        prevent_initial_call=True
+    )
+    def process_edit(edit_data, chat_trigger, cp_trigger, session_id):
+        """Process the edited message and regenerate response"""
+        if not edit_data or not session_id:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        agent = session_manager.get_agent(session_id)
+        if not agent:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        message_index = edit_data["index"]
+        new_content = edit_data["content"]
+        
+        # Process the edit (this truncates messages and regenerates AI response)
+        agent.edit_message(message_index, new_content)
+        
+        # Check if AI created a checkpoint for this state
+        ai_checkpoint_exists = agent.has_auto_checkpoint_for_current_state()
+        
+        # If AI saved, no unsaved changes; otherwise mark as unsaved
+        has_unsaved = not ai_checkpoint_exists
+        
+        # Increment checkpoint trigger if AI created a checkpoint
+        new_cp_trigger = (cp_trigger or 0) + 1 if ai_checkpoint_exists else cp_trigger
+        
+        return (chat_trigger or 0) + 1, has_unsaved, new_cp_trigger, ai_checkpoint_exists

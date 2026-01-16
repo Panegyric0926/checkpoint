@@ -365,3 +365,79 @@ class ChatAgent:
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a specific checkpoint"""
         return self.checkpoint_manager.delete_checkpoint(checkpoint_id)
+    
+    def edit_message(self, message_index: int, new_content: str) -> str:
+        """
+        Edit a user message at the specified index and regenerate conversation from that point.
+        This creates a new branch in the conversation - all messages after the edited one are discarded.
+        
+        Args:
+            message_index: The index of the user message to edit (in conversation history, not raw messages)
+            new_content: The new content for the message
+            
+        Returns:
+            The new AI response after regenerating from the edited message
+        """
+        # Get current conversation history (user + assistant messages only)
+        history = self.get_conversation_history()
+        
+        # Validate message index
+        if message_index < 0 or message_index >= len(history):
+            return "Error: Invalid message index"
+        
+        # Ensure we're editing a user message
+        if history[message_index]["role"] != "user":
+            return "Error: Can only edit user messages"
+        
+        # Build new message list up to (and including) the edited message
+        new_messages = []
+        
+        # Add system message if it exists in current state
+        for msg in self.current_state["messages"]:
+            if isinstance(msg, SystemMessage):
+                new_messages.append(msg)
+                break
+        
+        # Add messages up to and including the edited one
+        history_idx = 0
+        for msg in self.current_state["messages"]:
+            if isinstance(msg, (HumanMessage, AIMessage)):
+                if history_idx < message_index:
+                    # Keep messages before the edit
+                    new_messages.append(msg)
+                    history_idx += 1
+                elif history_idx == message_index:
+                    # Replace with edited message
+                    new_messages.append(HumanMessage(content=new_content))
+                    history_idx += 1
+                    break  # Stop here - discard everything after
+                else:
+                    break
+        
+        # Update state with truncated messages
+        self.current_state = {
+            "messages": new_messages,
+            "should_auto_checkpoint": False,
+            "auto_checkpoint_name": "",
+            "auto_checkpoint_reason": ""
+        }
+        
+        # Generate new AI response for the edited message
+        result = self.graph.invoke(
+            self.current_state,
+            config={"callbacks": [self.langfuse_handler]}
+        )
+        
+        # Update current state with new result
+        self.current_state = result
+        
+        # If AI judge recommends checkpoint, create it automatically
+        if result.get("should_auto_checkpoint", False):
+            self._create_auto_checkpoint()
+        
+        # Extract the last AI message
+        for msg in reversed(result["messages"]):
+            if isinstance(msg, AIMessage):
+                return msg.content
+        
+        return "I apologize, but I couldn't generate a response."
