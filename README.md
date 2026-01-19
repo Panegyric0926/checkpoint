@@ -164,11 +164,20 @@ You can edit your previously sent messages to explore different conversation pat
 
 1. **Edit Message**: Click the edit button (pencil icon) on any of your messages
 2. **Modify Content**: Edit the message text in the modal dialog
-3. **Create Branch**: Click "Save & Regenerate"
-   - All messages after the edited one are discarded
+3. **Instant Update**: When you click "Save & Regenerate":
+   - The message updates immediately in the UI
+   - The send button turns grey during AI processing
    - AI generates a new response to your edited message
+4. **Version History**: Each edit creates a new version of your message
+   - Navigation arrows (◀ ▶) appear next to edited messages
+   - Version indicator shows current version (e.g., "2/3")
+   - Click arrows to switch between versions
+   - **AI responses also switch** to match the selected version
+   - Original message is always preserved as version 1
+5. **Create Branch**: Editing discards all messages after the edited one
    - Creates a new conversation branch from that point
-4. **Checkpoint Protection**: Saved checkpoints remain unchanged
+   - All later messages in the current branch are removed
+6. **Checkpoint Protection**: Saved checkpoints remain unchanged
    - If you saved "My name is Mickey" as a checkpoint
    - Then edit it to "My name is Levin"
    - The checkpoint will still contain "Mickey"
@@ -178,6 +187,7 @@ You can edit your previously sent messages to explore different conversation pat
 - Try different phrasings of a question
 - Explore alternative conversation paths
 - Correct typos or refine your questions
+- Compare how AI responds to different versions
 - Experiment with different approaches without losing checkpoints
 
 ### Checkpoint System (Time Travel)

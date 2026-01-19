@@ -2,29 +2,42 @@
 
 ## Overview
 
-The Message Editing feature allows users to modify their previously sent messages, creating new conversation branches. This powerful feature enables exploration of alternative conversation paths while maintaining checkpoint integrity.
+The Message Editing feature allows users to modify their previously sent messages, creating new conversation branches. This powerful feature includes **version history tracking** - every edit is preserved, and you can navigate between versions using arrow buttons.
 
 ## Key Concepts
 
 ### 1. Message Editing
 - Users can click the edit button (📝) on any of their messages
 - Edit the message content in a modal dialog
+- Message updates immediately in the UI when "Save & Regenerate" is clicked
+- Send button turns grey during AI processing
 - All messages after the edited one are automatically discarded
 - AI generates a fresh response to the edited message
 
-### 2. Conversation Branching
+### 2. Version History
+- **Every edit creates a new version** of the message
+- Original message is preserved as version 1
+- Each subsequent edit becomes version 2, 3, etc.
+- Navigation arrows (◀ ▶) appear next to messages with multiple versions
+- Click arrows to switch between versions
+- Version indicator shows current/total (e.g., "2/3")
+- **Switching versions restores both the user message AND the corresponding AI response**
+- Each version includes the full conversation state at that point
+- No regeneration needed - instant state restoration
+
+### 3. Conversation Branching
 - Editing creates a new branch from that point
 - The conversation continues from the edited message with new AI responses
-- Previous branches can be recovered via checkpoints
+- Previous branches can be recovered via checkpoints or version history
 
-### 3. Checkpoint Immutability
+### 4. Checkpoint Immutability
 - **Critical**: Saved checkpoints are never modified by edits
 - Checkpoints preserve the original conversation state
 - You can always restore to return to the original branch
 
 ## Visual Flow Diagram
 
-### Basic Message Editing Flow
+### Basic Message Editing Flow with Version History
 
 ```mermaid
 flowchart TD
@@ -33,51 +46,91 @@ flowchart TD
     C --> D[Edit modal opens with current content]
     D --> E[User modifies content]
     E --> F[User clicks 'Save & Regenerate']
-    F --> G[Messages 4-6 are discarded]
-    G --> H[Message 3 is replaced with new content]
-    H --> I[AI generates new response]
-    I --> J[New conversation branch created]
+    F --> G[UI updates immediately]
+    G --> H[Send button turns grey]
+    H --> I[Original content saved as v1]
+    I --> J[New content becomes v2]
+    J --> K[Messages 4-6 are discarded]
+    K --> L[Message 3 is replaced with v2]
+    L --> M[AI generates new response]
+    M --> N[Navigation arrows appear: ◀ v2/2 ▶]
+    N --> O{User clicks ◀ arrow?}
+    O -->|Yes| P[Switch to v1 instantly]
+    O -->|No| Q[Continue with v2]
+    P --> R[Can click ▶ to return to v2]
     
     style C fill:#f9f,stroke:#333,stroke-width:2px
-    style G fill:#faa,stroke:#333,stroke-width:2px
-    style J fill:#afa,stroke:#333,stroke-width:2px
+    style G fill:#9f9,stroke:#333,stroke-width:2px
+    style I fill:#ff9,stroke:#333,stroke-width:2px
+    style N fill:#9ff,stroke:#333,stroke-width:2px
+    style K fill:#faa,stroke:#333,stroke-width:2px
 ```
 
 ## Detailed Example Scenario
 
-### Scenario: Editing Message in 6-Message Conversation
+### Scenario: Editing Message Multiple Times with Version History
 
 **Initial State:**
 ```
 Message 1 (User): "My name is Mickey"
 Message 2 (AI): "Nice to meet you, Mickey!"
-Message 3 (User): "What's the weather?"
+Message 3 (User): "What's the weather?" [v1]
 Message 4 (AI): "I'll search for weather information..."
 Message 5 (User): "Thanks!"
 Message 6 (AI): "You're welcome!"
 ```
 
-**User Actions:**
+**First Edit - User Actions:**
 1. User saves checkpoint at this point (6 messages)
 2. User clicks edit on Message 3
 3. User changes it to: "What's the capital of France?"
 4. User clicks "Save & Regenerate"
 
-**Result:**
+**Result After First Edit:**
 ```
 Message 1 (User): "My name is Mickey"
 Message 2 (AI): "Nice to meet you, Mickey!"
-Message 3 (User): "What's the capital of France?" ← EDITED
-Message 4 (AI): "The capital of France is Paris..." ← NEW RESPONSE
+Message 3 (User): "What's the capital of France?" ◀ 2/2 ▶ [EDITED]
+Message 4 (AI): "The capital of France is Paris..." [NEW RESPONSE]
 ```
 
-**Messages 5 and 6 are gone**, but the checkpoint still contains all 6 original messages!
+Version history for Message 3:
+- Version 1: "What's the weather?" + AI: "I'll search for weather..."
+- Version 2: "What's the capital of France?" + AI: "The capital of France is Paris..." ← current
+
+**Second Edit - User Actions:**
+1. User clicks edit on Message 3 again
+2. User changes it to: "Tell me about Python"
+3. User clicks "Save & Regenerate"
+
+**Result After Second Edit:**
+```
+Message 1 (User): "My name is Mickey"
+Message 2 (AI): "Nice to meet you, Mickey!"
+Message 3 (User): "Tell me about Python" ◀ 3/3 ▶ [EDITED AGAIN]
+Message 4 (AI): "Python is a versatile programming language..." [NEW RESPONSE]
+```
+
+Version history for Message 3:
+- Version 1: "What's the weather?" + AI: "I'll search for weather..."
+- Version 2: "What's the capital of France?" + AI: "The capital of France is Paris..."
+- Version 3: "Tell me about Python" + AI: "Python is a versatile..." ← current
+
+**Navigation:**
+- Click ◀ (left arrow): Shows version 2 with its AI response
+- Click ◀ again: Shows version 1 with its AI response
+- Click ▶ (right arrow): Moves forward through versions
+- **Important**: When you switch versions, BOTH the user message AND the AI response change
+- Each version is a complete snapshot of the conversation at that point
+
+**Messages 5 and 6 from original are gone**, but the checkpoint still contains all 6 original messages!
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant UI as Chat Interface
     participant A as Agent
+    participant VH as Version History
     participant CP as Checkpoints
     
     Note over U,CP: Initial Conversation (6 messages)
@@ -90,22 +143,43 @@ sequenceDiagram
     U->>UI: Save Checkpoint
     UI->>CP: Save state (6 messages)
     
-    Note over U,CP: Edit and Branch
+    Note over U,CP: First Edit
     U->>UI: Click edit on message 3
     UI->>U: Show edit modal
     U->>UI: Change to "capital of France?"
+    U->>UI: Click Save & Regenerate
+    UI->>UI: Update display immediately
+    UI->>VH: Store v1: "What's the weather?"
+    VH->>VH: Add v2: "capital of France?"
     UI->>A: Edit message at index 2
     A->>A: Truncate messages 4-6
     A->>A: Replace message 3
     A->>A: Generate new response
     A->>UI: "The capital of France is Paris..."
+    UI->>UI: Show arrows: ◀ v2/2 ▶
+    
+    Note over U,CP: Version Navigation
+    U->>UI: Click ◀ arrow
+    UI->>VH: Get v1
+    VH->>UI: "What's the weather?"
+    UI->>UI: Update display (no API call)
+    U->>UI: Click ▶ arrow
+    UI->>VH: Get v2
+    VH->>UI: "capital of France?"
+    UI->>UI: Update display
+    
+    Note over U,CP: Second Edit
+    U->>UI: Edit again to "Tell me about Python"
+    VH->>VH: Add v3: "Tell me about Python"
+    A->>UI: New response
+    UI->>UI: Show arrows: ◀ v3/3 ▶
     
     Note over CP: Checkpoint UNCHANGED!<br/>Still contains 6 original messages
 ```
 
 ## State Transitions
 
-### Message State Flow
+### Message State Flow with Version History
 
 ```mermaid
 stateDiagram-v2
@@ -115,16 +189,34 @@ stateDiagram-v2
     Original --> EditModal: Click edit button
     EditModal --> Editing: Modify content
     Editing --> EditModal: Continue editing
-    Editing --> Branching: Confirm edit
+    Editing --> UpdateUI: Confirm edit
+    UpdateUI --> StoreVersion: UI updates immediately
+    StoreVersion --> VersionHistory: Save as new version (v2, v3...)
+    VersionHistory --> Branching: Create new branch
     Branching --> Truncate: Discard later messages
-    Truncate --> Replace: Update edited message
+    Truncate --> Replace: Update with current version
     Replace --> Regenerate: Call AI
     Regenerate --> NewBranch: New response generated
-    NewBranch --> [*]: Continue conversation
+    NewBranch --> ShowArrows: Display ◀ vX/Y ▶
+    ShowArrows --> Navigate: User can switch versions
+    Navigate --> ShowArrows: Arrows update
+    ShowArrows --> [*]: Continue conversation
     
     note right of Checkpoint
         Checkpoint is immutable
         Contains original state
+    end note
+    
+    note right of VersionHistory
+        All versions preserved
+        v1 = original
+        v2, v3, ... = edits
+    end note
+    
+    note right of Navigate
+        Version switching is instant
+        No API calls needed
+        Just UI update
     end note
     
     note right of Truncate
@@ -224,11 +316,11 @@ flowchart TB
 
 ## Example Use Cases
 
-### 1. Correcting Typos
+### 1. Correcting Typos with History
 
 **Before:**
 ```
-User: "What is Pythn used for?"
+User: "What is Pythn used for?" [v1]
 AI: "Python (assuming you meant Python) is used for..."
 ```
 
@@ -236,24 +328,38 @@ AI: "Python (assuming you meant Python) is used for..."
 
 **After:**
 ```
-User: "What is Python used for?"
+User: "What is Python used for?" ◀ v2/2 ▶
 AI: "Python is a versatile programming language used for..."
 ```
 
-### 2. Exploring Alternative Questions
+**Navigation:** Click ◀ to see original typo if needed
+
+### 2. Exploring Alternative Questions with Version Tracking
 
 **Branch A (Original):**
 ```
-1. User: "Tell me about dogs"
+1. User: "Tell me about dogs" [v1]
 2. AI: "Dogs are domesticated mammals..."
 [Save checkpoint here]
 ```
 
-**Edit message 1 to create Branch B:**
+**Edit to create Branch B:**
 ```
-1. User: "Tell me about cats"
+1. User: "Tell me about cats" ◀ v2/2 ▶
 2. AI: "Cats are independent felines..."
 ```
+
+**Edit again to create Branch C:**
+```
+1. User: "Tell me about birds" ◀ v3/3 ▶
+2. AI: "Birds are feathered vertebrates..."
+```
+
+**Navigation Options:**
+- Click ◀ twice to see v1 "Tell me about dogs"
+- Click ◀ once to see v2 "Tell me about cats"  
+- Click ▶ to move forward through versions
+- All versions accessible without regenerating
 
 **Restore checkpoint to return to Branch A:**
 ```
@@ -261,30 +367,41 @@ AI: "Python is a versatile programming language used for..."
 2. AI: "Dogs are domesticated mammals..."
 ```
 
-### 3. Refining Complex Questions
+### 3. Refining Questions Iteratively
 
-**Original:**
+**Version 1 (Vague):**
 ```
-User: "How do I code?"
+User: "How do I code?" [v1]
 AI: "Coding involves writing instructions..."
 ```
 
-**Edit to be more specific:**
+**Version 2 (More Specific):**
 ```
-User: "How do I implement a binary search tree in Python?"
+User: "How do I code in Python?" ◀ v2/3 ▶
+AI: "Here's how to start with Python..."
+```
+
+**Version 3 (Very Specific):**
+```
+User: "How do I implement a binary search tree in Python?" ◀ v3/3 ▶
 AI: "Here's how to implement a BST in Python: class Node:..."
 ```
 
+**Benefit:** Can review how different levels of specificity affected AI responses by navigating versions
+
 ## Comparison with Checkpoint Restore
 
-| Feature | Message Editing | Checkpoint Restore |
-|---------|----------------|-------------------|
-| **Scope** | Edits one message | Restores entire state |
-| **Discards** | Messages after edited one | Messages after checkpoint |
-| **AI Response** | Always generates new response | No new response |
-| **Use Case** | Refine a question | Return to conversation point |
-| **Checkpoints** | Preserved unchanged | Used as restore source |
-| **Branch Creation** | Creates new branch | Switches to existing branch |
+| Feature | Message Editing | Version Navigation | Checkpoint Restore |
+|---------|----------------|-------------------|-------------------|
+| **Scope** | Edits one message | Views different versions of one message | Restores entire state |
+| **Discards** | Messages after edited one | Nothing | Messages after checkpoint |
+| **AI Response** | Always generates new response | No new response | No new response |
+| **Speed** | Slow (API call) | Instant (UI only) | Fast (state restore) |
+| **History** | Creates new version | Switches between versions | Returns to saved state |
+| **Use Case** | Try new question | Compare edit versions | Return to conversation point |
+| **Checkpoints** | Preserved unchanged | Preserved unchanged | Used as restore source |
+| **Branch Creation** | Creates new branch | No branch change | Switches to existing branch |
+| **UI Indicator** | ◀ vX/Y ▶ arrows appear | Arrow buttons update | Checkpoint list |
 
 ## Technical Flow Chart
 
@@ -336,25 +453,37 @@ flowchart TD
 
 ### ✅ Do's
 
-1. **Save Checkpoints Before Major Edits**
+1. **Use Version Navigation to Compare**
+   - After editing, use arrows to compare versions
+   - See how different phrasings affect understanding
+   - No API cost to switch versions
+
+2. **Save Checkpoints Before Major Edits**
    - If you want to preserve the current branch
    - Save a checkpoint before editing
    - You can always return to it
 
-2. **Use Descriptive Checkpoint Names**
+3. **Use Descriptive Checkpoint Names**
    - "Before exploring alternatives"
    - "Original conversation about Python"
    - Helps you identify which branch to restore
 
-3. **Edit for Refinement**
+4. **Edit for Refinement**
    - Clarify vague questions
    - Fix typos or grammar
    - Add more specific context
+   - Build up from general to specific (v1 → v2 → v3)
 
-4. **Experiment Freely**
+5. **Experiment Freely**
    - Checkpoints protect your work
+   - Version history preserves all edits
    - Try different approaches
-   - Restore if you don't like the new branch
+   - Navigate back to any version instantly
+
+6. **Review Version History**
+   - Use arrows to see how your question evolved
+   - Learn what made questions clearer
+   - Understand which versions worked best
 
 ### ❌ Don'ts
 
@@ -373,6 +502,16 @@ flowchart TD
    - This maintains conversation integrity
    - AI messages are responses to user input
 
+4. **Don't Forget Version History Exists**
+   - After multiple edits, remember earlier versions are preserved
+   - You can always navigate back
+   - No need to manually copy/save old text
+
+5. **Don't Confuse Version Navigation with Regeneration**
+   - Switching versions = instant UI update only
+   - To regenerate from different version, switch first then edit
+   - Version navigation doesn't create new AI responses
+
 ## FAQ
 
 **Q: What happens to checkpoints when I edit a message?**
@@ -387,9 +526,17 @@ A: Yes. The edit will affect your current conversation, but the checkpoint still
 
 A: They are permanently discarded from the current conversation. However, if you saved a checkpoint with those messages, you can restore to get them back.
 
+**Q: How many versions are stored for each edited message?**
+
+A: All versions are stored! v1 is the original, and each subsequent edit becomes v2, v3, v4, etc. There's no limit.
+
+**Q: Does switching between versions with the arrows trigger AI regeneration?**
+
+A: No! Version navigation is instant and only updates the UI. It doesn't make any API calls or regenerate responses. This makes it very fast and free to compare versions.
+
 **Q: Can I undo an edit?**
 
-A: Not directly, but if you saved a checkpoint before editing, you can restore to that checkpoint to return to the original state.
+A: Yes! Click the ◀ arrow to go back to version 1 (original). If you want to regenerate AI response from v1, switch to it and then click edit → save & regenerate.
 
 **Q: Can I edit AI responses?**
 
@@ -397,15 +544,33 @@ A: No, only user messages can be edited. This maintains the integrity of the con
 
 **Q: What happens if the AI judge creates a checkpoint after my edit?**
 
-A: The AI judge evaluates the new conversation state after your edit. If significant, it may create a new checkpoint with the edited branch.
+A: The AI judge evaluates the new conversation state after your edit. If significant, it may create a new checkpoint with the edited branch. Your version history remains intact.
+
+**Q: If I edit a message multiple times and then restore a checkpoint, do I lose the version history?**
+
+A: Yes, restoring a checkpoint replaces your entire current state, including version history. The checkpoint contains its own state from when it was created.
+
+**Q: Can I see all versions at once?**
+
+A: Not currently - you navigate one at a time using arrows. The version indicator (v2/5) shows which version you're viewing and how many total versions exist.
+
+**Q: What's the difference between version navigation and checkpoint restore?**
+
+A: Version navigation switches the display of ONE message between its different edits (instant, UI only). Checkpoint restore replaces the ENTIRE conversation with a saved state (includes all messages, slower).
 
 ## Summary
 
-Message Editing provides powerful conversation branching while maintaining the safety net of immutable checkpoints. This combination allows for fearless exploration of different conversation paths with the confidence that you can always return to previous states.
+Message Editing provides powerful conversation branching with complete version history tracking while maintaining the safety net of immutable checkpoints. This combination allows for fearless exploration of different conversation paths with instant access to all previous versions.
 
 Key Takeaways:
 - ✏️ Edit any user message to create a new branch
-- 🗑️ Later messages are automatically discarded
+- 📚 All versions are preserved (version 1, 2, 3, ...)
+- ◀▶ Navigate between versions instantly with arrow buttons
+- 🗑️ Later messages are automatically discarded when editing
+- ⚡ Version switching is instant - restores full conversation state
+- 🤖 AI responses change when you switch versions
 - 🔒 Checkpoints remain completely unchanged
 - 🔄 Restore checkpoints to return to previous branches
 - 🌳 Build complex conversation trees with multiple branches
+- 📊 Compare different phrasings and their AI responses
+- 💡 UI updates immediately when editing - send button turns grey during processing

@@ -47,6 +47,13 @@ class ChatAgent:
         self.llm_with_tools = self.llm.bind_tools(self.tools)
         self.checkpoint_manager = CheckpointManager()
         self.checkpoint_judge = CheckpointJudgeAgent()
+        # Track edit history for the LATEST user message only: [{"messages": [...], "user_content": "..."}]
+        # Stores full conversation state after each edit
+        self.message_edit_history: list[dict] = []
+        # Track which version is currently displayed
+        self.current_version_index: int = -1
+        # Track which message index is being edited (for validation)
+        self.edited_message_index: int = -1
         self.current_state: AgentState = {
             "messages": [],
             "should_auto_checkpoint": False,
@@ -196,6 +203,14 @@ class ChatAgent:
         Returns:
             The agent's response text
         """
+        # Clear edit history when a new message is sent (new message becomes the latest)
+        # Old edit history is no longer relevant since only the latest message is editable
+        if self.message_edit_history:
+            # Update the latest version's storage before clearing
+            if self.current_version_index >= 0 and self.current_version_index < len(self.message_edit_history):
+                current_state_serialized = self._serialize_messages(self.current_state["messages"])
+                self.message_edit_history[self.current_version_index]["messages"] = current_state_serialized
+        
         # Add user message to state
         self.current_state["messages"] = list(self.current_state["messages"]) + [
             HumanMessage(content=user_message)
@@ -306,6 +321,7 @@ class ChatAgent:
         """
         Restore to a previous checkpoint.
         All conversation after this checkpoint will be discarded.
+        Edit history is also cleared since checkpoints don't store edit history.
         
         Args:
             checkpoint_id: The ID of the checkpoint to restore
@@ -335,6 +351,12 @@ class ChatAgent:
                 messages.append(SystemMessage(content=content))
         
         self.current_state = {"messages": messages}
+        
+        # Clear edit history since checkpoints don't store edit history
+        self.message_edit_history.clear()
+        self.current_version_index = -1
+        self.edited_message_index = -1
+        
         return True
     
     def get_conversation_history(self) -> list[dict]:
@@ -361,14 +383,130 @@ class ChatAgent:
             "auto_checkpoint_name": "",
             "auto_checkpoint_reason": ""
         }
+        self.message_edit_history.clear()
+        self.current_version_index = -1
+        self.edited_message_index = -1
     
     def delete_checkpoint(self, checkpoint_id: str) -> bool:
         """Delete a specific checkpoint"""
         return self.checkpoint_manager.delete_checkpoint(checkpoint_id)
     
+    def _serialize_messages(self, messages: list) -> list:
+        """Convert message objects to serializable format for storage"""
+        return [
+            {
+                "type": type(msg).__name__,
+                "content": msg.content,
+                "additional_kwargs": getattr(msg, "additional_kwargs", {}),
+                "tool_calls": getattr(msg, "tool_calls", []) if hasattr(msg, "tool_calls") else []
+            }
+            for msg in messages
+        ]
+    
+    def _deserialize_messages(self, serialized: list) -> list:
+        """Convert serialized messages back to message objects"""
+        messages = []
+        for msg_data in serialized:
+            msg_type = msg_data.get("type", "")
+            content = msg_data.get("content", "")
+            
+            if msg_type == "HumanMessage":
+                messages.append(HumanMessage(content=content))
+            elif msg_type == "AIMessage":
+                messages.append(AIMessage(
+                    content=content,
+                    additional_kwargs=msg_data.get("additional_kwargs", {})
+                ))
+            elif msg_type == "SystemMessage":
+                messages.append(SystemMessage(content=content))
+        return messages
+    
+    def get_message_edit_history(self, message_index: int) -> list[str]:
+        """Get all versions of a message's user content (returns empty list if no edits)"""
+        # Only the latest user message has edit history
+        if message_index != self.edited_message_index or not self.message_edit_history:
+            return []
+        return [version["user_content"] for version in self.message_edit_history]
+    
+    def get_conversation_with_edit_info(self) -> list[dict]:
+        """
+        Get conversation history with edit information.
+        
+        Returns:
+            List of dicts with 'role', 'content', 'has_edits', 'edit_versions', 'current_version_index'
+        """
+        history = self.get_conversation_history()
+        result = []
+        
+        for idx, msg in enumerate(history):
+            edit_versions = self.get_message_edit_history(idx)
+            # Get the current version index, default to latest if not set
+            current_idx = self.current_version_index if idx == self.edited_message_index else (len(edit_versions) - 1 if edit_versions else -1)
+            
+            result.append({
+                "role": msg["role"],
+                "content": msg["content"],
+                "has_edits": len(edit_versions) > 0,
+                "edit_versions": edit_versions,
+                "current_version_index": current_idx
+            })
+        
+        return result
+    
+    def switch_message_version(self, message_index: int, version_index: int) -> bool:
+        """
+        Switch to a different version of the edited message.
+        This restores the full conversation state (including AI response) from that version.
+        Only works for the latest user message.
+        
+        Args:
+            message_index: The message index in conversation history
+            version_index: Which version to switch to (0 = original)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Only allow switching versions for the edited message
+        if message_index != self.edited_message_index or not self.message_edit_history:
+            return False
+        
+        if version_index < 0 or version_index >= len(self.message_edit_history):
+            return False
+        
+        # If we're already on the requested version, nothing to do
+        if self.current_version_index == version_index:
+            return True
+        
+        # Before switching away from the current version (especially the latest one),
+        # update its stored state to include any messages added since the edit
+        if self.current_version_index == len(self.message_edit_history) - 1:
+            # This is the latest version - update its storage with current state
+            current_state_serialized = self._serialize_messages(self.current_state["messages"])
+            self.message_edit_history[self.current_version_index]["messages"] = current_state_serialized
+        
+        # Now restore the target version
+        version_data = self.message_edit_history[version_index]
+        stored_messages = version_data["messages"]
+        
+        # Restore the full conversation state from this version
+        restored_messages = self._deserialize_messages(stored_messages)
+        
+        self.current_state = {
+            "messages": restored_messages,
+            "should_auto_checkpoint": False,
+            "auto_checkpoint_name": "",
+            "auto_checkpoint_reason": ""
+        }
+        
+        # Update the current version index
+        self.current_version_index = version_index
+        
+        return True
+    
     def edit_message(self, message_index: int, new_content: str) -> str:
         """
         Edit a user message at the specified index and regenerate conversation from that point.
+        Only the latest user message can be edited.
         This creates a new branch in the conversation - all messages after the edited one are discarded.
         
         Args:
@@ -388,6 +526,36 @@ class ChatAgent:
         # Ensure we're editing a user message
         if history[message_index]["role"] != "user":
             return "Error: Can only edit user messages"
+        
+        # Find the last user message index
+        last_user_idx = -1
+        for i in range(len(history) - 1, -1, -1):
+            if history[i]["role"] == "user":
+                last_user_idx = i
+                break
+        
+        # Only allow editing the last user message
+        if message_index != last_user_idx:
+            return "Error: Only the latest user message can be edited"
+        
+        # Store current full state as a version BEFORE modifying it
+        old_content = history[message_index]["content"]
+        
+        if not self.message_edit_history or self.edited_message_index != message_index:
+            # First edit of this message - store original state as version 0
+            original_state = self._serialize_messages(self.current_state["messages"])
+            self.message_edit_history = [{
+                "messages": original_state,
+                "user_content": old_content
+            }]
+            self.edited_message_index = message_index
+            self.current_version_index = 0
+        else:
+            # NOT the first edit - save current state before creating new version
+            if self.current_version_index == len(self.message_edit_history) - 1:
+                # We're on the latest version, update its storage before creating new version
+                current_state_serialized = self._serialize_messages(self.current_state["messages"])
+                self.message_edit_history[self.current_version_index]["messages"] = current_state_serialized
         
         # Build new message list up to (and including) the edited message
         new_messages = []
@@ -430,6 +598,16 @@ class ChatAgent:
         
         # Update current state with new result
         self.current_state = result
+        
+        # Store this new state as a version
+        new_state = self._serialize_messages(result["messages"])
+        self.message_edit_history.append({
+            "messages": new_state,
+            "user_content": new_content
+        })
+        
+        # Update current version index to point to the newly created version
+        self.current_version_index = len(self.message_edit_history) - 1
         
         # If AI judge recommends checkpoint, create it automatically
         if result.get("should_auto_checkpoint", False):

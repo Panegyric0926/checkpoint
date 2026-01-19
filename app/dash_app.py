@@ -96,7 +96,10 @@ def create_layout() -> html.Div:
                                     dbc.Button(
                                         [
                                             dbc.Spinner(
-                                                html.I(className="fas fa-paper-plane", id="send-icon"),
+                                                html.Span(
+                                                    html.I(className="fas fa-paper-plane"),
+                                                    id="send-btn-content"
+                                                ),
                                                 id="send-spinner",
                                                 size="sm",
                                                 spinner_class_name="d-none",
@@ -199,36 +202,6 @@ def create_layout() -> html.Div:
                 ]),
             ], id="restore-checkpoint-modal", is_open=False),
             
-            # Edit Message Modal
-            dbc.Modal([
-                dbc.ModalHeader(dbc.ModalTitle("Edit Message & Create Branch")),
-                dbc.ModalBody([
-                    html.P([
-                        html.I(className="fas fa-code-branch text-info me-2"),
-                        "Editing this message will create a new conversation branch."
-                    ]),
-                    html.P(
-                        "All messages after this one will be discarded, and a new AI response will be generated.",
-                        className="text-warning small"
-                    ),
-                    html.P(
-                        "Note: Saved checkpoints remain unchanged.",
-                        className="text-muted small"
-                    ),
-                    html.Hr(),
-                    dbc.Label("Edit your message:"),
-                    dbc.Textarea(
-                        id="edit-message-content",
-                        placeholder="Type your edited message...",
-                        style={"minHeight": "120px"}
-                    ),
-                ]),
-                dbc.ModalFooter([
-                    dbc.Button("Cancel", id="edit-cancel-btn", color="secondary"),
-                    dbc.Button("Save & Regenerate", id="edit-confirm-btn", color="primary"),
-                ]),
-            ], id="edit-message-modal", is_open=False),
-            
             # Hidden stores for state management
             dcc.Store(id="session-id", storage_type="session"),  # Store session ID (persists within tab)
             dcc.Store(id="pending-restore-checkpoint-id"),
@@ -237,8 +210,8 @@ def create_layout() -> html.Div:
             dcc.Store(id="pending-message", data=""),  # Store for pending message
             dcc.Store(id="has-unsaved-changes", data=False),  # Track if there are unsaved changes
             dcc.Store(id="ai-checkpoint-exists", data=False),  # Track if AI created checkpoint for current state
-            dcc.Store(id="pending-edit-index"),  # Store message index being edited
-            dcc.Store(id="pending-edit-content"),  # Store edited message content
+            dcc.Store(id="editing-message-index", data=None),  # Track which message is being edited (in the message box)
+            dcc.Store(id="pending-edit-data", data=None),  # Store edited content for processing
             
             # Dummy location component to trigger initial callbacks
             dcc.Location(id="url", refresh=False)
@@ -334,8 +307,9 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("chat-messages", "children"),
         Input("chat-trigger", "data"),
         Input("session-id", "data"),
+        Input("editing-message-index", "data"),
     )
-    def update_chat_display(_, session_id):
+    def update_chat_display(_, session_id, editing_index):
         """Update the chat display with current conversation"""
         if not session_id:
             return html.Div([
@@ -350,7 +324,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 html.P("Session expired. Please refresh the page.", className="text-muted mt-2")
             ], className="text-center py-5")
         
-        history = agent.get_conversation_history()
+        history = agent.get_conversation_with_edit_info()
         
         if not history:
             return html.Div([
@@ -362,34 +336,123 @@ def register_callbacks(app: dash.Dash) -> None:
         for idx, msg in enumerate(history):
             role = msg["role"]
             content = msg["content"]
+            has_edits = msg["has_edits"]
+            edit_versions = msg["edit_versions"]
+            current_version_idx = msg["current_version_index"]
             
             if role == "user":
-                messages.append(html.Div([
-                    html.Div([
-                        html.Div([html.I(className="fas fa-user me-1"), "You"], className="fw-bold mb-1"),
-                        html.Div(content),
-                        # Add edit button for user messages
+                # Find the last user message index
+                last_user_idx = -1
+                for i in range(len(history) - 1, -1, -1):
+                    if history[i]["role"] == "user":
+                        last_user_idx = i
+                        break
+                
+                # Only show edit button and version navigation for the last user message
+                is_last_user_message = (idx == last_user_idx)
+                
+                # Build version navigation if there are edits AND this is the last user message
+                version_nav = None
+                if is_last_user_message and has_edits and len(edit_versions) > 1:
+                    version_nav = html.Div([
                         dbc.Button(
-                            html.I(className="fas fa-edit"),
-                            id={"type": "edit-msg-btn", "index": idx},
+                            html.I(className="fas fa-chevron-left"),
+                            id={"type": "prev-version-btn", "index": idx},
                             size="sm",
                             color="light",
                             outline=True,
-                            className="mt-2",
-                            title="Edit and create new branch",
-                            style={"opacity": "0.7"}
-                        )
-                    ], className="chat-message user-message", style={
-                        "padding": "12px 16px",
-                        "margin": "8px 0",
-                        "borderRadius": "12px",
-                        "maxWidth": "75%",
-                        "boxShadow": "0 2px 4px rgba(0,0,0,0.1)",
-                        "background": "linear-gradient(135deg, #4a90d9 0%, #2563eb 100%)",
-                        "color": "white",
-                        "borderBottomRightRadius": "4px",
-                    })
-                ], style={"display": "flex", "justifyContent": "flex-end"}))
+                            disabled=(current_version_idx <= 0),
+                            className="me-1",
+                            style={"padding": "2px 6px", "fontSize": "0.7rem"}
+                        ),
+                        html.Span(
+                            f"{current_version_idx + 1}/{len(edit_versions)}",
+                            className="text-white small me-1",
+                            style={"fontSize": "0.75rem", "opacity": "0.8"}
+                        ),
+                        dbc.Button(
+                            html.I(className="fas fa-chevron-right"),
+                            id={"type": "next-version-btn", "index": idx},
+                            size="sm",
+                            color="light",
+                            outline=True,
+                            disabled=(current_version_idx >= len(edit_versions) - 1),
+                            className="me-2",
+                            style={"padding": "2px 6px", "fontSize": "0.7rem"}
+                        ),
+                    ], className="d-inline-flex align-items-center mt-2")
+                
+                # Check if this message is being edited
+                is_editing = (editing_index == idx)
+                
+                if is_editing:
+                    # Show editable textarea with save/cancel buttons
+                    messages.append(html.Div([
+                        html.Div([
+                            html.Div([html.I(className="fas fa-user me-1"), "You"], className="fw-bold mb-1"),
+                            dbc.Textarea(
+                                id={"type": "edit-textarea", "index": idx},
+                                value=content,
+                                style={"minHeight": "80px", "backgroundColor": "rgba(255,255,255,0.95)", "color": "#333"},
+                                className="mb-2"
+                            ),
+                            html.Div([
+                                dbc.Button(
+                                    [html.I(className="fas fa-check me-1"), "Update"],
+                                    id={"type": "save-edit-btn", "index": idx},
+                                    size="sm",
+                                    color="success",
+                                    className="me-2"
+                                ),
+                                dbc.Button(
+                                    [html.I(className="fas fa-times me-1"), "Cancel"],
+                                    id={"type": "cancel-edit-btn", "index": idx},
+                                    size="sm",
+                                    color="secondary",
+                                    outline=True
+                                )
+                            ])
+                        ], className="chat-message user-message", style={
+                            "padding": "12px 16px",
+                            "margin": "8px 0",
+                            "borderRadius": "12px",
+                            "maxWidth": "75%",
+                            "boxShadow": "0 2px 4px rgba(0,0,0,0.1)",
+                            "background": "linear-gradient(135deg, #4a90d9 0%, #2563eb 100%)",
+                            "color": "white",
+                            "borderBottomRightRadius": "4px",
+                        })
+                    ], style={"display": "flex", "justifyContent": "flex-end"}))
+                else:
+                    # Show normal message with edit button
+                    messages.append(html.Div([
+                        html.Div([
+                            html.Div([html.I(className="fas fa-user me-1"), "You"], className="fw-bold mb-1"),
+                            html.Div(content),
+                            html.Div([
+                                version_nav if version_nav else html.Span(),
+                                dbc.Button(
+                                    html.I(className="fas fa-edit"),
+                                    id={"type": "edit-msg-btn", "index": idx},
+                                    size="sm",
+                                    color="light",
+                                    outline=True,
+                                    className="mt-2",
+                                    title="Edit and create new branch",
+                                    style={"opacity": "0.7", "display": "inline-block" if is_last_user_message else "none"}
+                                )
+                            ], className="d-flex justify-content-between align-items-center")
+                        ], className="chat-message user-message", style={
+                            "padding": "12px 16px",
+                            "margin": "8px 0",
+                            "borderRadius": "12px",
+                            "maxWidth": "75%",
+                            "boxShadow": "0 2px 4px rgba(0,0,0,0.1)",
+                            "background": "linear-gradient(135deg, #4a90d9 0%, #2563eb 100%)",
+                            "color": "white",
+                            "borderBottomRightRadius": "4px",
+                        })
+                    ], style={"display": "flex", "justifyContent": "flex-end"}))
             else:
                 messages.append(html.Div([
                     html.Div([
@@ -416,18 +479,23 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("user-input", "disabled"),
         Output("send-btn", "color"),
         Output("send-spinner", "spinner_class_name"),
-        Output("send-icon", "className"),
+        Output("send-btn-content", "children"),
         Input("pending-message", "data"),
+        Input("pending-edit-data", "data"),
         Input("chat-trigger", "data"),
     )
-    def toggle_input_state(pending_message, chat_trigger):
-        """Disable input while processing message and show loading state"""
+    def toggle_input_state(pending_message, pending_edit, chat_trigger):
+        """Disable input while processing and show loading state"""
         triggered_id = ctx.triggered_id
-        if triggered_id == "pending-message" and pending_message:
-            # Message is being processed, disable inputs and show loading
-            return True, True, "secondary", "", "d-none"
-        # Processing complete or no message, enable inputs
-        return False, False, "primary", "d-none", "fas fa-paper-plane"
+        
+        btn_content = html.I(className="fas fa-paper-plane")
+        
+        # If message or edit is being processed, disable inputs and show loading
+        if (triggered_id == "pending-message" and pending_message) or (triggered_id == "pending-edit-data" and pending_edit):
+            return True, True, "secondary", "", btn_content
+        
+        # Normal state: inputs enabled
+        return False, False, "primary", "d-none", btn_content
     
     @app.callback(
         Output("save-checkpoint-btn", "disabled"),
@@ -531,7 +599,29 @@ def register_callbacks(app: dash.Dash) -> None:
         return items
     
     @app.callback(
-        Output("user-input", "value"),
+        Output("pending-edit-data", "data"),
+        Output("editing-message-index", "data", allow_duplicate=True),
+        Input({"type": "save-edit-btn", "index": ALL}, "n_clicks"),
+        State({"type": "edit-textarea", "index": ALL}, "value"),
+        prevent_initial_call=True
+    )
+    def handle_save_edit(save_clicks, textarea_values):
+        """Capture edited content when save button is clicked"""
+        triggered_id = ctx.triggered_id
+        
+        if isinstance(triggered_id, dict) and triggered_id.get("type") == "save-edit-btn":
+            if any(click is not None and click > 0 for click in save_clicks):
+                message_index = triggered_id["index"]
+                # Find the corresponding textarea value
+                if textarea_values and len(textarea_values) > 0:
+                    edited_content = textarea_values[0]  # There should only be one textarea active
+                    if edited_content and edited_content.strip():
+                        return {"index": message_index, "content": edited_content.strip()}, None
+        
+        return dash.no_update, dash.no_update
+    
+    @app.callback(
+        Output("user-input", "value", allow_duplicate=True),
         Output("pending-message", "data"),
         Input("send-btn", "n_clicks"),
         Input("user-input", "n_submit"),
@@ -543,8 +633,8 @@ def register_callbacks(app: dash.Dash) -> None:
         if not user_input or not user_input.strip():
             return dash.no_update, dash.no_update
         
-        # Clear input immediately and store message for processing
-        return "", user_input.strip()
+        # Store new message for processing
+        return "", {"type": "new", "content": user_input.strip()}
     
     @app.callback(
         Output("chat-trigger", "data", allow_duplicate=True),
@@ -552,24 +642,44 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("checkpoint-trigger", "data", allow_duplicate=True),
         Output("ai-checkpoint-exists", "data", allow_duplicate=True),
         Input("pending-message", "data"),
+        Input("pending-edit-data", "data"),
         State("chat-trigger", "data"),
         State("checkpoint-trigger", "data"),
         State("session-id", "data"),
         prevent_initial_call=True
     )
-    def process_message(pending_message, chat_trigger, cp_trigger, session_id):
-        """Process the pending message through the agent"""
-        if not pending_message or not session_id:
+    def process_message(message_data, edit_data, chat_trigger, cp_trigger, session_id):
+        """Process either a new message or an edited message"""
+        if not session_id:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
         agent = session_manager.get_agent(session_id)
         if not agent:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
-        # Process the message through the agent (this may take time and may create AI checkpoint)
-        agent.chat(pending_message)
+        triggered_id = ctx.triggered_id
         
-        # Check if AI created a checkpoint for this state
+        # Handle edit message (from message box)
+        if triggered_id == "pending-edit-data" and edit_data:
+            message_index = edit_data.get("index")
+            content = edit_data.get("content")
+            if message_index is not None and content:
+                agent.edit_message(message_index, content)
+                # After editing, the old AI checkpoint no longer matches the edited content
+                # Mark as unsaved and disable ai-checkpoint-exists
+                return (chat_trigger or 0) + 1, True, cp_trigger, False
+        # Handle new message (from input line)
+        elif triggered_id == "pending-message" and message_data:
+            msg_type = message_data.get("type")
+            content = message_data.get("content")
+            if msg_type == "new" and content:
+                agent.chat(content)
+            else:
+                return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        else:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        # Check if AI created a checkpoint for this state (only for new messages)
         ai_checkpoint_exists = agent.has_auto_checkpoint_for_current_state()
         
         # If AI saved, no unsaved changes; otherwise mark as unsaved
@@ -734,62 +844,92 @@ def register_callbacks(app: dash.Dash) -> None:
         return (chat_trigger or 0) + 1, (cp_trigger or 0) + 1, False, False
     
     @app.callback(
-        Output("edit-message-modal", "is_open"),
-        Output("pending-edit-index", "data"),
-        Output("edit-message-content", "value"),
+        Output("editing-message-index", "data"),
         Input({"type": "edit-msg-btn", "index": ALL}, "n_clicks"),
-        Input("edit-cancel-btn", "n_clicks"),
-        State("edit-message-modal", "is_open"),
-        State("pending-edit-index", "data"),
-        State("session-id", "data"),
+        Input({"type": "cancel-edit-btn", "index": ALL}, "n_clicks"),
         prevent_initial_call=True
     )
-    def handle_edit_modal(edit_clicks, cancel_click, is_open, pending_index, session_id):
-        """Handle the edit message modal"""
+    def handle_edit_mode(edit_clicks, cancel_clicks):
+        """Toggle edit mode for a message"""
         triggered_id = ctx.triggered_id
         
-        # Close modal on cancel
-        if triggered_id == "edit-cancel-btn":
-            return False, None, ""
-        
-        # Open modal when edit button is clicked
+        # Enter edit mode when edit button is clicked
         if isinstance(triggered_id, dict) and triggered_id.get("type") == "edit-msg-btn":
             if any(click is not None and click > 0 for click in edit_clicks):
-                if not session_id:
-                    return dash.no_update, dash.no_update, dash.no_update
-                
-                agent = session_manager.get_agent(session_id)
-                if not agent:
-                    return dash.no_update, dash.no_update, dash.no_update
-                
-                message_index = triggered_id["index"]
-                history = agent.get_conversation_history()
-                
-                # Get the current content of the message
-                if 0 <= message_index < len(history) and history[message_index]["role"] == "user":
-                    current_content = history[message_index]["content"]
-                    return True, message_index, current_content
+                return triggered_id["index"]
         
-        return dash.no_update, dash.no_update, dash.no_update
+        # Exit edit mode when cancel button is clicked
+        if isinstance(triggered_id, dict) and triggered_id.get("type") == "cancel-edit-btn":
+            if any(click is not None and click > 0 for click in cancel_clicks):
+                return None
+        
+        return dash.no_update
     
     @app.callback(
-        Output("edit-message-modal", "is_open", allow_duplicate=True),
         Output("chat-trigger", "data", allow_duplicate=True),
-        Output("pending-edit-content", "data"),
-        Input("edit-confirm-btn", "n_clicks"),
-        State("pending-edit-index", "data"),
-        State("edit-message-content", "value"),
+        Input({"type": "prev-version-btn", "index": ALL}, "n_clicks"),
         State("chat-trigger", "data"),
         State("session-id", "data"),
         prevent_initial_call=True
     )
-    def capture_edit(n_clicks, message_index, edited_content, chat_trigger, session_id):
-        """Capture the edited content for processing and close modal"""
-        if not n_clicks or message_index is None or not edited_content or not session_id:
-            return dash.no_update, dash.no_update, dash.no_update
+    def switch_to_previous_version(prev_clicks, chat_trigger, session_id):
+        """Switch to previous version of an edited message"""
+        triggered_id = ctx.triggered_id
         
-        # Close modal and store edited content for processing
-        return False, chat_trigger, {"index": message_index, "content": edited_content.strip()}
+        if isinstance(triggered_id, dict) and triggered_id.get("type") == "prev-version-btn":
+            if any(click is not None and click > 0 for click in prev_clicks):
+                if not session_id:
+                    return dash.no_update
+                
+                agent = session_manager.get_agent(session_id)
+                if not agent:
+                    return dash.no_update
+                
+                message_index = triggered_id["index"]
+                history = agent.get_conversation_with_edit_info()
+                
+                if message_index < len(history):
+                    msg_info = history[message_index]
+                    if msg_info["has_edits"]:
+                        current_version = msg_info["current_version_index"]
+                        if current_version > 0:
+                            agent.switch_message_version(message_index, current_version - 1)
+                            return (chat_trigger or 0) + 1
+        
+        return dash.no_update
+    
+    @app.callback(
+        Output("chat-trigger", "data", allow_duplicate=True),
+        Input({"type": "next-version-btn", "index": ALL}, "n_clicks"),
+        State("chat-trigger", "data"),
+        State("session-id", "data"),
+        prevent_initial_call=True
+    )
+    def switch_to_next_version(next_clicks, chat_trigger, session_id):
+        """Switch to next version of an edited message"""
+        triggered_id = ctx.triggered_id
+        
+        if isinstance(triggered_id, dict) and triggered_id.get("type") == "next-version-btn":
+            if any(click is not None and click > 0 for click in next_clicks):
+                if not session_id:
+                    return dash.no_update
+                
+                agent = session_manager.get_agent(session_id)
+                if not agent:
+                    return dash.no_update
+                
+                message_index = triggered_id["index"]
+                history = agent.get_conversation_with_edit_info()
+                
+                if message_index < len(history):
+                    msg_info = history[message_index]
+                    if msg_info["has_edits"]:
+                        current_version = msg_info["current_version_index"]
+                        if current_version < len(msg_info["edit_versions"]) - 1:
+                            agent.switch_message_version(message_index, current_version + 1)
+                            return (chat_trigger or 0) + 1
+        
+        return dash.no_update
     
     @app.callback(
         Output("chat-trigger", "data", allow_duplicate=True),
